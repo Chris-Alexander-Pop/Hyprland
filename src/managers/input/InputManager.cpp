@@ -2,6 +2,7 @@
 #include "../../desktop/view/window/WindowPresentation.hpp"
 #include "../../Compositor.hpp"
 #include <aquamarine/output/Output.hpp>
+#include <cmath>
 #include <cstdint>
 #include <hyprutils/math/Vector2D.hpp>
 #include <ranges>
@@ -140,6 +141,19 @@ void CInputManager::onMouseMoved(IPointer::SMotionEvent e) {
             if (e.device->m_flipY) {
                 delta.y   = -delta.y;
                 unaccel.y = -unaccel.y;
+            }
+            if (e.device->m_applySoftwareTouchpadRotation && (e.device->m_softwareTouchpadRotationDeg % 360) != 0) {
+                const double rad = e.device->m_softwareTouchpadRotationDeg * M_PI / 180.0;
+                const double c   = std::cos(rad);
+                const double s   = std::sin(rad);
+                const double rdx = delta.x * c + delta.y * s;
+                const double rdy = -delta.x * s + delta.y * c;
+                delta.x            = rdx;
+                delta.y            = rdy;
+                const double rudx = unaccel.x * c + unaccel.y * s;
+                const double rudy = -unaccel.x * s + unaccel.y * c;
+                unaccel.x = rudx;
+                unaccel.y = rudy;
             }
         }
     }
@@ -979,6 +993,23 @@ void CInputManager::onMouseWheel(IPointer::SAxisEvent e, SP<IPointer> pointer) {
     if (e.source == WL_POINTER_AXIS_SOURCE_WHEEL && e.deltaDiscrete == 0 && e.delta != 0)
         e.deltaDiscrete = std::round(e.delta * 8.0);
 
+    // Software-rotate two-finger scroll axis when the touchpad has software rotation active.
+    if (pointer && pointer->m_applySoftwareTouchpadRotation && (e.source == WL_POINTER_AXIS_SOURCE_FINGER || e.source == WL_POINTER_AXIS_SOURCE_CONTINUOUS)) {
+        const int rot = ((pointer->m_softwareTouchpadRotationDeg % 360) + 360) % 360;
+        // At 90° and 270° the scroll axes are transposed; at 180° only the sign flips.
+        if (rot == 90) {
+            // VERTICAL finger swipe → HORIZONTAL scroll, preserve direction
+            e.axis          = (e.axis == WL_POINTER_AXIS_VERTICAL_SCROLL) ? WL_POINTER_AXIS_HORIZONTAL_SCROLL : WL_POINTER_AXIS_VERTICAL_SCROLL;
+            e.delta         = -e.delta;
+            e.deltaDiscrete = -e.deltaDiscrete;
+        } else if (rot == 180) {
+            e.delta         = -e.delta;
+            e.deltaDiscrete = -e.deltaDiscrete;
+        } else if (rot == 270) {
+            e.axis = (e.axis == WL_POINTER_AXIS_VERTICAL_SCROLL) ? WL_POINTER_AXIS_HORIZONTAL_SCROLL : WL_POINTER_AXIS_VERTICAL_SCROLL;
+        }
+    }
+
     const bool ISTOUCHPADSCROLL = *PTOUCHPADSCROLLFACTOR <= 0.f || e.source == WL_POINTER_AXIS_SOURCE_FINGER;
     auto       factor           = ISTOUCHPADSCROLL ? *PTOUCHPADSCROLLFACTOR : *PINPUTSCROLLFACTOR;
 
@@ -1387,6 +1418,9 @@ void CInputManager::setPointerConfigs() {
         if (m->aq() && m->aq()->getLibinputHandle()) {
             const auto LIBINPUTDEV = m->aq()->getLibinputHandle();
 
+            m->m_applySoftwareTouchpadRotation = false;
+            m->m_softwareTouchpadRotationDeg     = 0;
+
             double     touchw = 0, touchh = 0;
             const auto ISTOUCHPAD = libinput_device_has_capability(LIBINPUTDEV, LIBINPUT_DEVICE_CAP_POINTER) &&
                 libinput_device_get_size(LIBINPUTDEV, &touchw, &touchh) == 0; // pointer with size is a touchpad
@@ -1467,8 +1501,15 @@ void CInputManager::setPointerConfigs() {
             const auto LIBINPUTSENS = std::clamp(Config::mgr()->getDeviceFloat(devname, "sensitivity", "input:sensitivity"), -1.f, 1.f);
             libinput_device_config_accel_set_speed(LIBINPUTDEV, LIBINPUTSENS);
 
-            if (libinput_device_config_rotation_is_available(LIBINPUTDEV)) {
-                const auto ROTATION = std::clamp(Config::mgr()->getDeviceInt(devname, "rotation", "input:rotation"), 0, 359);
+            const auto ROTATION = std::clamp(Config::mgr()->getDeviceInt(devname, "rotation", "input:rotation"), 0, 359);
+            if (ISTOUCHPAD) {
+                if (libinput_device_config_rotation_is_available(LIBINPUTDEV)) {
+                    libinput_device_config_rotation_set_angle(LIBINPUTDEV, ROTATION);
+                } else {
+                    m->m_applySoftwareTouchpadRotation = true;
+                    m->m_softwareTouchpadRotationDeg     = ROTATION;
+                }
+            } else if (libinput_device_config_rotation_is_available(LIBINPUTDEV)) {
                 libinput_device_config_rotation_set_angle(LIBINPUTDEV, ROTATION);
             }
 
@@ -2353,6 +2394,20 @@ void CInputManager::onSwipeUpdate(IPointer::SSwipeUpdateEvent e) {
     Event::bus()->m_events.gesture.swipe.update.emit(e, info);
     if (info.cancelled)
         return;
+
+    // Apply software touchpad rotation to swipe gesture deltas.
+    for (auto const& ptr : m_pointers) {
+        if (ptr->m_isTouchpad && ptr->m_applySoftwareTouchpadRotation && (ptr->m_softwareTouchpadRotationDeg % 360) != 0) {
+            const double rad = ptr->m_softwareTouchpadRotationDeg * M_PI / 180.0;
+            const double c   = std::cos(rad);
+            const double s   = std::sin(rad);
+            const double rx  = e.delta.x * c + e.delta.y * s;
+            const double ry  = -e.delta.x * s + e.delta.y * c;
+            e.delta.x = rx;
+            e.delta.y = ry;
+            break;
+        }
+    }
 
     g_pTrackpadGestures->gestureUpdate(e);
 

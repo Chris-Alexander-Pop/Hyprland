@@ -143,17 +143,17 @@ void CInputManager::onMouseMoved(IPointer::SMotionEvent e) {
                 unaccel.y = -unaccel.y;
             }
             if (e.device->m_applySoftwareTouchpadRotation && (e.device->m_softwareTouchpadRotationDeg % 360) != 0) {
-                const double rad = e.device->m_softwareTouchpadRotationDeg * M_PI / 180.0;
-                const double c   = std::cos(rad);
-                const double s   = std::sin(rad);
-                const double rdx = delta.x * c + delta.y * s;
-                const double rdy = -delta.x * s + delta.y * c;
-                delta.x            = rdx;
-                delta.y            = rdy;
+                const double rad  = e.device->m_softwareTouchpadRotationDeg * M_PI / 180.0;
+                const double c    = std::cos(rad);
+                const double s    = std::sin(rad);
+                const double rdx  = delta.x * c + delta.y * s;
+                const double rdy  = -delta.x * s + delta.y * c;
+                delta.x           = rdx;
+                delta.y           = rdy;
                 const double rudx = unaccel.x * c + unaccel.y * s;
                 const double rudy = -unaccel.x * s + unaccel.y * c;
-                unaccel.x = rudx;
-                unaccel.y = rudy;
+                unaccel.x         = rudx;
+                unaccel.y         = rudy;
             }
         }
     }
@@ -1419,7 +1419,7 @@ void CInputManager::setPointerConfigs() {
             const auto LIBINPUTDEV = m->aq()->getLibinputHandle();
 
             m->m_applySoftwareTouchpadRotation = false;
-            m->m_softwareTouchpadRotationDeg     = 0;
+            m->m_softwareTouchpadRotationDeg   = 0;
 
             double     touchw = 0, touchh = 0;
             const auto ISTOUCHPAD = libinput_device_has_capability(LIBINPUTDEV, LIBINPUT_DEVICE_CAP_POINTER) &&
@@ -1507,7 +1507,7 @@ void CInputManager::setPointerConfigs() {
                     libinput_device_config_rotation_set_angle(LIBINPUTDEV, ROTATION);
                 } else {
                     m->m_applySoftwareTouchpadRotation = true;
-                    m->m_softwareTouchpadRotationDeg     = ROTATION;
+                    m->m_softwareTouchpadRotationDeg   = ROTATION;
                 }
             } else if (libinput_device_config_rotation_is_available(LIBINPUTDEV)) {
                 libinput_device_config_rotation_set_angle(LIBINPUTDEV, ROTATION);
@@ -2403,8 +2403,8 @@ void CInputManager::onSwipeUpdate(IPointer::SSwipeUpdateEvent e) {
             const double s   = std::sin(rad);
             const double rx  = e.delta.x * c + e.delta.y * s;
             const double ry  = -e.delta.x * s + e.delta.y * c;
-            e.delta.x = rx;
-            e.delta.y = ry;
+            e.delta.x        = rx;
+            e.delta.y        = ry;
             break;
         }
     }

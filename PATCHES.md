@@ -9,6 +9,10 @@ This branch tracks [hyprwm/Hyprland](https://github.com/hyprwm/Hyprland) `main` 
 
 ## Updating from upstream
 
+**Automated:** GitHub Actions rebases `patched` onto [hyprwm/Hyprland](https://github.com/hyprwm/Hyprland) `main` every Monday. If your patches conflict, the workflow fails and GitHub emails you (with default notification settings).
+
+**Manual:**
+
 ```bash
 git fetch upstream
 git checkout patched
@@ -23,7 +27,7 @@ Or from the PKGBUILD directory:
 ~/.local/share/pkgbuilds/hyprland-patched/rebase-fork.sh
 ```
 
-## Building (Arch)
+**Local rebuild** (topgrade post-step or by hand):
 
 ```bash
 ~/.local/share/pkgbuilds/hyprland-patched/update.sh

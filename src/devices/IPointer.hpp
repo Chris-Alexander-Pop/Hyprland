@@ -118,5 +118,9 @@ class IPointer : public IHID {
     bool                 m_isTouchpad   = false;
     std::optional<float> m_scrollFactor = {};
 
+    // When libinput cannot rotate the touchpad, apply input:rotation here (degrees clockwise).
+    bool                 m_applySoftwareTouchpadRotation = false;
+    int                  m_softwareTouchpadRotationDeg   = 0;
+
     WP<IPointer>         m_self;
 };

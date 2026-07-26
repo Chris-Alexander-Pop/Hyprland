@@ -18,16 +18,18 @@
 #include "../protocols/core/Output.hpp"
 #include "../protocols/Screencopy.hpp"
 #include "../protocols/ToplevelExport.hpp"
-#include "../managers/PointerManager.hpp"
+#include "../pointer/PointerManager.hpp"
+#include "../pointer/PointerController.hpp"
 #include "../managers/eventLoop/EventLoopManager.hpp"
 #include "../protocols/core/Compositor.hpp"
 #include "../protocols/core/DataDevice.hpp"
 #include "../render/Renderer.hpp"
 #include "../managers/EventManager.hpp"
 #include "../managers/screenshare/ScreenshareManager.hpp"
-#include "../managers/animation/AnimationManager.hpp"
-#include "../managers/animation/DesktopAnimationManager.hpp"
+#include "../animation/AnimationManager.hpp"
+#include "../animation/WorkspaceAnimationController.hpp"
 #include "../managers/input/InputManager.hpp"
+#include "../managers/fullscreen/FullscreenController.hpp"
 #include "../errorOverlay/Overlay.hpp"
 #include "../layout/LayoutManager.hpp"
 #include "../layout/space/Space.hpp"
@@ -40,7 +42,9 @@
 #include "../state/WorkspaceState.hpp"
 #include "../helpers/time/Time.hpp"
 #include "../desktop/view/LayerSurface.hpp"
+#include "../desktop/state/GlobalWindowController.hpp"
 #include "../desktop/state/FocusState.hpp"
+#include "../desktop/state/FadingOutState.hpp"
 #include "../event/EventBus.hpp"
 #include "../helpers/Drm.hpp"
 #include "MonitorFrameScheduler.hpp"
@@ -67,17 +71,31 @@ using namespace Desktop::View;
 using namespace Render::GL;
 using namespace Monitor;
 
+constexpr const char* drmFormatToString(uint32_t drmFormat) {
+    switch (drmFormat) {
+        case DRM_FORMAT_XRGB2101010: return "DRM_FORMAT_XRGB2101010";
+        case DRM_FORMAT_XBGR2101010: return "DRM_FORMAT_XBGR2101010";
+        case DRM_FORMAT_XRGB8888: return "DRM_FORMAT_XRGB8888";
+        case DRM_FORMAT_XBGR8888: return "DRM_FORMAT_XBGR8888";
+        default: return "Invalid";
+    }
+}
+
 CMonitor::CMonitor(SP<Aquamarine::IOutput> output_) : m_name(output_->name), m_state(this), m_output(output_), m_imageDescription(getDefaultImageDescription()) {
-    g_pAnimationManager->createAnimation(0.f, m_specialFade, Config::animationTree()->getAnimationPropertyConfig("specialWorkspaceIn"), AVARDAMAGE_NONE);
+    Animation::mgr()->createAnimation(0.f, m_specialFade, Config::animationTree()->getAnimationPropertyConfig("specialWorkspaceIn"), AVARDAMAGE_NONE);
     m_specialFade->setUpdateCallback([this](auto) { g_pHyprRenderer->damageMonitor(m_self.lock()); });
+    Animation::mgr()->createAnimation(0.f, m_specialDim, Config::animationTree()->getAnimationPropertyConfig("specialWorkspaceIn"), AVARDAMAGE_NONE);
+    m_specialDim->setUpdateCallback([this](auto) { g_pHyprRenderer->damageMonitor(m_self.lock()); });
+    Animation::mgr()->createAnimation(0.f, m_specialBlur, Config::animationTree()->getAnimationPropertyConfig("specialWorkspaceIn"), AVARDAMAGE_NONE);
+    m_specialBlur->setUpdateCallback([this](auto) { g_pHyprRenderer->damageMonitor(m_self.lock()); });
     static auto PZOOMFACTOR = CConfigValue<Config::FLOAT>("cursor:zoom_factor");
-    g_pAnimationManager->createAnimation(*PZOOMFACTOR, m_cursorZoom, Config::animationTree()->getAnimationPropertyConfig("zoomFactor"), AVARDAMAGE_NONE);
+    Animation::mgr()->createAnimation(*PZOOMFACTOR, m_cursorZoom, Config::animationTree()->getAnimationPropertyConfig("zoomFactor"), AVARDAMAGE_NONE);
     m_cursorZoom->setUpdateCallback([this](auto) { g_pHyprRenderer->damageMonitor(m_self.lock()); });
-    g_pAnimationManager->createAnimation(0.F, m_zoomAnimProgress, Config::animationTree()->getAnimationPropertyConfig("monitorAdded"), AVARDAMAGE_NONE);
+    Animation::mgr()->createAnimation(0.F, m_zoomAnimProgress, Config::animationTree()->getAnimationPropertyConfig("monitorAdded"), AVARDAMAGE_NONE);
     m_zoomAnimProgress->setUpdateCallback([this](auto) { g_pHyprRenderer->damageMonitor(m_self.lock()); });
-    g_pAnimationManager->createAnimation(0.F, m_backgroundOpacity, Config::animationTree()->getAnimationPropertyConfig("monitorAdded"), AVARDAMAGE_NONE);
+    Animation::mgr()->createAnimation(0.F, m_backgroundOpacity, Config::animationTree()->getAnimationPropertyConfig("monitorAdded"), AVARDAMAGE_NONE);
     m_backgroundOpacity->setUpdateCallback([this](auto) { g_pHyprRenderer->damageMonitor(m_self.lock()); });
-    g_pAnimationManager->createAnimation(0.F, m_dpmsBlackOpacity, Config::animationTree()->getAnimationPropertyConfig("fadeDpms"), AVARDAMAGE_NONE);
+    Animation::mgr()->createAnimation(0.F, m_dpmsBlackOpacity, Config::animationTree()->getAnimationPropertyConfig("fadeDpms"), AVARDAMAGE_NONE);
     m_dpmsBlackOpacity->setUpdateCallback([this](auto) { g_pHyprRenderer->damageMonitor(m_self.lock()); });
 }
 
@@ -96,9 +114,9 @@ void CMonitor::onConnect(bool noRule) {
 
     g_pEventLoopManager->doLater([] {
         State::workspacePlacementController()->ensurePersistentWorkspacesPresent(
-            nullptr, [](PHLWORKSPACE ws, PHLMONITOR mon, bool noWarp) { g_pCompositor->moveWorkspaceToMonitor(ws, mon, noWarp); });
+            nullptr, [](PHLWORKSPACE ws, PHLMONITOR mon, bool noWarp) { State::workspacePlacementController()->moveWorkspaceToMonitor(ws, mon, noWarp); });
         State::workspacePlacementController()->ensureWorkspacesOnAssignedMonitors(
-            [](PHLWORKSPACE ws, PHLMONITOR mon, bool noWarp) { g_pCompositor->moveWorkspaceToMonitor(ws, mon, noWarp); });
+            [](PHLWORKSPACE ws, PHLMONITOR mon, bool noWarp) { State::workspacePlacementController()->moveWorkspaceToMonitor(ws, mon, noWarp); });
     });
 
     m_listeners.frame      = m_output->events.frame.listen([this] {
@@ -129,20 +147,19 @@ void CMonitor::onConnect(bool noRule) {
             }
         }
 
-        timespec* ts = event.when;
+        timespec ts{};
+        auto     flags = event.flags;
 
-        if (ts && ts->tv_sec <= 2) {
+        if (event.when && event.when->tv_sec > 2) {
             // drop this timestamp, it's not valid. Likely drm is cringe. We can't push it further because
             // a) it's wrong, b) our translations aren't 100% accurate and risk underflows
-            ts = nullptr;
+            ts = *event.when;
+        } else {
+            clock_gettime(CLOCK_MONOTONIC, &ts);
+            flags &= ~Aquamarine::IOutput::AQ_OUTPUT_PRESENT_HW_CLOCK;
         }
 
-        if (!ts) {
-            timespec mono{};
-            clock_gettime(CLOCK_MONOTONIC, &mono);
-            PROTO::presentation->onPresented(m_self.lock(), mono, event.refresh, event.seq, event.flags & ~Aquamarine::IOutput::AQ_OUTPUT_PRESENT_HW_CLOCK);
-        } else
-            PROTO::presentation->onPresented(m_self.lock(), *ts, event.refresh, event.seq, event.flags);
+        PROTO::presentation->onPresented(m_self.lock(), ts, event.refresh, event.seq, flags);
 
         if (m_zoomAnimFrameCounter < 5) {
             m_zoomAnimFrameCounter++;
@@ -179,7 +196,7 @@ void CMonitor::onConnect(bool noRule) {
 
         m_frameScheduler->onPresented();
 
-        m_events.presented.emit();
+        m_events.presented.emit(Time::fromTimespec(&ts));
     });
 
     m_listeners.destroy = m_output->events.destroy.listen([this] {
@@ -300,7 +317,8 @@ void CMonitor::onConnect(bool noRule) {
 
     Log::logger->log(Log::DEBUG, "Added new monitor with name {} at {:j0} with size {:j0}, pointer {:x}", m_name, m_position, m_pixelSize, rc<uintptr_t>(m_output.get()));
 
-    setupDefaultWS(monitorRule);
+    if (!isMirror())
+        setupDefaultWS(monitorRule);
 
     for (auto const& ws : State::workspaceState()->workspacesCopy()) {
         if (!valid(ws))
@@ -309,11 +327,12 @@ void CMonitor::onConnect(bool noRule) {
         const auto CURRENTMON = ws->m_monitor.lock();
         const bool ORPHANED   = !CURRENTMON || std::ranges::none_of(State::monitorState()->monitors(), [&](const auto& mon) { return mon == CURRENTMON; });
         const bool RETURNING  = ws->m_lastMonitor == m_name;
-        const bool RECOVERY   = State::monitorState()->monitors().size() == 1 && ORPHANED; // temporarily recover orphaned workspaces
+        const bool RECOVERY   = ORPHANED &&
+            std::ranges::count_if(State::monitorState()->monitors(), [](const auto& mon) { return !mon->m_isUnsafeFallback; }) == 1; // temporarily recover orphaned workspaces
 
         if (RETURNING || RECOVERY) {
-            g_pCompositor->moveWorkspaceToMonitor(ws, m_self.lock());
-            g_pDesktopAnimationManager->startAnimation(ws, CDesktopAnimationManager::ANIMATION_TYPE_IN, true, true);
+            State::workspacePlacementController()->moveWorkspaceToMonitor(ws, m_self.lock());
+            Animation::Workspace::startAnimation(ws, Animation::Workspace::ANIMATION_TYPE_IN, true, true);
             if (RETURNING)
                 ws->m_lastMonitor = "";
         }
@@ -350,7 +369,7 @@ void CMonitor::onConnect(bool noRule) {
         Log::logger->log(Log::DEBUG, "Monitor {} was on workspace {}, setting it to that", m_name, workspaceID);
         auto ws = State::workspaceState()->query().id(workspaceID).run();
         if (ws) {
-            g_pCompositor->moveWorkspaceToMonitor(ws, m_self.lock());
+            State::workspacePlacementController()->moveWorkspaceToMonitor(ws, m_self.lock());
             changeWorkspace(ws, true, false, false);
         }
     } else
@@ -413,7 +432,7 @@ void CMonitor::onDisconnect(bool destroy) {
         m_mirrorOf->m_mirrors.erase(std::ranges::find_if(m_mirrorOf->m_mirrors, [&](const auto& other) { return other == m_self; }));
 
         // unlock software for mirrored monitor
-        g_pPointerManager->unlockSoftwareForMonitor(m_mirrorOf.lock());
+        Pointer::mgr()->unlockSoftwareForMonitor(m_mirrorOf.lock());
         m_mirrorOf.reset();
     }
 
@@ -432,7 +451,7 @@ void CMonitor::onDisconnect(bool destroy) {
 
     for (size_t i = 0; i < 4; ++i) {
         for (auto const& ls : m_layerSurfaceLayers[i]) {
-            if (ls->m_layerSurface && !ls->m_fadingOut)
+            if (ls->m_layerSurface)
                 ls->m_layerSurface->sendClosed();
         }
         m_layerSurfaceLayers[i].clear();
@@ -458,11 +477,11 @@ void CMonitor::onDisconnect(bool destroy) {
 
     if (BACKUPMON) {
         // snap cursor
-        g_pCompositor->warpCursorTo(BACKUPMON->m_position + BACKUPMON->m_transformedSize / 2.F, true);
+        Pointer::pointerController()->warpTo(BACKUPMON->m_position + BACKUPMON->m_transformedSize / 2.F, true);
 
         for (auto const& w : wspToMove) {
-            g_pCompositor->moveWorkspaceToMonitor(w, BACKUPMON);
-            g_pDesktopAnimationManager->startAnimation(w, CDesktopAnimationManager::ANIMATION_TYPE_IN, true, true);
+            State::workspacePlacementController()->moveWorkspaceToMonitor(w, BACKUPMON);
+            Animation::Workspace::startAnimation(w, Animation::Workspace::ANIMATION_TYPE_IN, true, true);
         }
     } else {
         Desktop::focusState()->surface().reset();
@@ -678,6 +697,7 @@ bool CMonitor::applyMonitorRuleSoft(Config::CMonitorRule&& pMonitorRule) {
     }
 
     Vector2D xfmd     = m_transform % 2 == 1 ? Vector2D{m_pixelSize.y, m_pixelSize.x} : m_pixelSize;
+    m_size            = (xfmd / m_scale).round();
     m_transformedSize = xfmd;
 
     if (m_createdByUser) {
@@ -957,33 +977,12 @@ bool CMonitor::applyMonitorRule(Config::CMonitorRule&& pMonitorRule) {
 
     m_pixelSize = m_size;
 
-    // clang-format off
-    static const std::array<std::vector<std::pair<std::string, uint32_t>>, 2> formats{
-        std::vector<std::pair<std::string, uint32_t>>{ /* 10-bit */
-            {"DRM_FORMAT_XRGB2101010", DRM_FORMAT_XRGB2101010}, {"DRM_FORMAT_XBGR2101010", DRM_FORMAT_XBGR2101010}, {"DRM_FORMAT_XRGB8888", DRM_FORMAT_XRGB8888}, {"DRM_FORMAT_XBGR8888", DRM_FORMAT_XBGR8888}
-        },
-        std::vector<std::pair<std::string, uint32_t>>{ /* 8-bit */
-            {"DRM_FORMAT_XRGB8888", DRM_FORMAT_XRGB8888}, {"DRM_FORMAT_XBGR8888", DRM_FORMAT_XBGR8888}
-        }
-    };
-    // clang-format on
+    static constexpr auto formats10bit = std::to_array<uint32_t>({DRM_FORMAT_XRGB2101010, DRM_FORMAT_XBGR2101010});
+    static constexpr auto formats8bit  = std::to_array<uint32_t>({DRM_FORMAT_XRGB8888, DRM_FORMAT_XBGR8888});
 
-    bool set10bit = false;
-
-    for (auto const& fmt : formats[sc<int>(!RULE->m_enable10bit)]) {
-        m_output->state->setFormat(fmt.second);
-        m_prevDrmFormat = m_drmFormat;
-        m_drmFormat     = fmt.second;
-
-        if (!m_state.test()) {
-            Log::logger->log(Log::ERR, "output {} failed basic test on format {}", m_name, fmt.first);
-        } else {
-            Log::logger->log(Log::DEBUG, "output {} succeeded basic test on format {}", m_name, fmt.first);
-            if (RULE->m_enable10bit && fmt.first.contains("101010"))
-                set10bit = true;
-            break;
-        }
-    }
+    const bool            set10bit = RULE->m_enable10bit && trySetFormat(formats10bit);
+    if (!set10bit)
+        trySetFormat(formats8bit);
 
     m_enabled10bit = set10bit;
 
@@ -1137,7 +1136,7 @@ void CMonitor::scheduleFrame(Aquamarine::IOutput::scheduleFrameReason reason) {
 }
 
 void CMonitor::addDamage(const pixman_region32_t* rg) {
-    if (m_cursorZoom->value() != 1.f && State::monitorState()->query().vec(g_pPointerManager->position()).run() == m_self) {
+    if (m_cursorZoom->value() != 1.f && State::monitorState()->query().vec(Pointer::mgr()->position()).run() == m_self) {
         m_damage.damageEntire();
         scheduleFrame(Aquamarine::IOutput::AQ_SCHEDULE_DAMAGE);
     } else if (m_damage.damage(rg))
@@ -1149,7 +1148,7 @@ void CMonitor::addDamage(const CRegion& rg) {
 }
 
 void CMonitor::addDamage(const CBox& box) {
-    if (m_cursorZoom->value() != 1.f && State::monitorState()->query().vec(g_pPointerManager->position()).run() == m_self) {
+    if (m_cursorZoom->value() != 1.f && State::monitorState()->query().vec(Pointer::mgr()->position()).run() == m_self) {
         m_damage.damageEntire();
         scheduleFrame(Aquamarine::IOutput::AQ_SCHEDULE_DAMAGE);
         return;
@@ -1164,9 +1163,9 @@ bool CMonitor::shouldSkipScheduleFrameOnMouseEvent() {
     static auto PMINRR   = CConfigValue<Config::INTEGER>("cursor:min_refresh_rate");
 
     // skip scheduling extra frames for fullsreen apps with vrr
-    const auto FS_WINDOW          = getFullscreenWindow();
+    const auto FULLSCREEN_WINDOW  = Fullscreen::controller()->getFullscreenWindow(m_self.lock());
     const bool shouldRenderCursor = g_pHyprRenderer->shouldRenderCursor();
-    const bool noBreak            = FS_WINDOW && (*PNOBREAK == 1 || (*PNOBREAK == 2 && FS_WINDOW->getContentType() == CONTENT_TYPE_GAME));
+    const bool noBreak            = FULLSCREEN_WINDOW && (*PNOBREAK == 1 || (*PNOBREAK == 2 && FULLSCREEN_WINDOW->getContentType() == CONTENT_TYPE_GAME));
     const bool shouldSkip         = (!shouldRenderCursor || noBreak) && m_output->state->state().adaptiveSync;
 
     // keep requested minimum refresh rate
@@ -1240,7 +1239,7 @@ bool CMonitor::enabled() const {
 }
 
 bool CMonitor::hasOutput() const {
-    return m_output;
+    return !!m_output;
 }
 
 SP<Aquamarine::IOutput> CMonitor::output() const {
@@ -1314,10 +1313,10 @@ void CMonitor::setupDefaultWS(const Config::CMonitorRule& monitorRule) {
 
     if (PNEWWORKSPACE) {
         // workspace exists, move it to the newly connected monitor
-        g_pCompositor->moveWorkspaceToMonitor(PNEWWORKSPACE, m_self.lock());
+        State::workspacePlacementController()->moveWorkspaceToMonitor(PNEWWORKSPACE, m_self.lock());
         m_activeWorkspace = PNEWWORKSPACE;
         g_layoutManager->recalculateMonitor(m_self.lock());
-        g_pDesktopAnimationManager->startAnimation(PNEWWORKSPACE, CDesktopAnimationManager::ANIMATION_TYPE_IN, true, true);
+        Animation::Workspace::startAnimation(PNEWWORKSPACE, Animation::Workspace::ANIMATION_TYPE_IN, true, true);
     } else {
         if (newDefaultWorkspaceName.empty())
             newDefaultWorkspaceName = std::to_string(wsID);
@@ -1355,7 +1354,7 @@ void CMonitor::setMirror(const std::string& mirrorOf) {
             m_mirrorOf->m_mirrors.erase(std::ranges::find_if(m_mirrorOf->m_mirrors, [&](const auto& other) { return other == m_self; }));
 
             // unlock software for mirrored monitor
-            g_pPointerManager->unlockSoftwareForMonitor(m_mirrorOf.lock());
+            Pointer::mgr()->unlockSoftwareForMonitor(m_mirrorOf.lock());
         }
 
         m_mirrorOf.reset();
@@ -1378,8 +1377,8 @@ void CMonitor::setMirror(const std::string& mirrorOf) {
         }
 
         for (auto const& w : wspToMove) {
-            g_pCompositor->moveWorkspaceToMonitor(w, BACKUPMON);
-            g_pDesktopAnimationManager->startAnimation(w, CDesktopAnimationManager::ANIMATION_TYPE_IN, true, true);
+            State::workspacePlacementController()->moveWorkspaceToMonitor(w, BACKUPMON);
+            Animation::Workspace::startAnimation(w, Animation::Workspace::ANIMATION_TYPE_IN, true, true);
         }
 
         m_activeWorkspace.reset();
@@ -1393,7 +1392,7 @@ void CMonitor::setMirror(const std::string& mirrorOf) {
         Desktop::focusState()->rawMonitorFocus(State::monitorState()->monitors().front());
 
         // Software lock mirrored monitor
-        g_pPointerManager->lockSoftwareForMonitor(PMIRRORMON);
+        Pointer::mgr()->lockSoftwareForMonitor(PMIRRORMON);
     }
 
     m_events.modeChanged.emit();
@@ -1472,11 +1471,11 @@ void CMonitor::changeWorkspace(const PHLWORKSPACE& pWorkspace, bool internal, bo
         const auto ANIMTOLEFT = POLDWORKSPACE && (shouldWraparound(pWorkspace->m_id, POLDWORKSPACE->m_id) ^ (pWorkspace->m_id > POLDWORKSPACE->m_id));
         const auto ANIMSTYLE  = pWorkspace->m_animationStyle;
         if (POLDWORKSPACE)
-            g_pDesktopAnimationManager->startAnimation(POLDWORKSPACE, CDesktopAnimationManager::ANIMATION_TYPE_OUT, ANIMTOLEFT, false, ANIMSTYLE);
-        g_pDesktopAnimationManager->startAnimation(pWorkspace, CDesktopAnimationManager::ANIMATION_TYPE_IN, ANIMTOLEFT, false, ANIMSTYLE);
+            Animation::Workspace::startAnimation(POLDWORKSPACE, Animation::Workspace::ANIMATION_TYPE_OUT, ANIMTOLEFT, false, ANIMSTYLE);
+        Animation::Workspace::startAnimation(pWorkspace, Animation::Workspace::ANIMATION_TYPE_IN, ANIMTOLEFT, false, ANIMSTYLE);
 
         // move pinned windows
-        for (auto const& w : g_pCompositor->m_windows) {
+        for (auto const& w : Desktop::windowState()->windows()) {
             if (w->m_workspace == POLDWORKSPACE && w->m_pinned)
                 w->layoutTarget()->assignToSpace(pWorkspace->m_space);
         }
@@ -1484,12 +1483,12 @@ void CMonitor::changeWorkspace(const PHLWORKSPACE& pWorkspace, bool internal, bo
         if (!noFocus && !Desktop::focusState()->monitor()->m_activeSpecialWorkspace &&
             !(Desktop::focusState()->window() && Desktop::focusState()->window()->m_pinned && Desktop::focusState()->window()->m_monitor == m_self)) {
             static auto PFOLLOWMOUSE = CConfigValue<Config::INTEGER>("input:follow_mouse");
-            auto        pWindow      = pWorkspace->m_hasFullscreenWindow ? pWorkspace->getFullscreenWindow() : pWorkspace->getLastFocusedWindow();
+            auto pWindow = Fullscreen::controller()->hasFullscreen(pWorkspace) ? Fullscreen::controller()->getFullscreenWindow(pWorkspace) : pWorkspace->getLastFocusedWindow();
 
             if (!pWindow) {
                 if (*PFOLLOWMOUSE == 1)
-                    pWindow = g_pCompositor->vectorToWindowUnified(g_pInputManager->getMouseCoordsInternal(),
-                                                                   Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS | Desktop::View::ALLOW_FLOATING);
+                    pWindow = Desktop::viewState()->hitTest().windowAt(g_pInputManager->getMouseCoordsInternal(),
+                                                                       Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS | Desktop::View::ALLOW_FLOATING);
 
                 if (!pWindow)
                     pWindow = pWorkspace->getFocusCandidate();
@@ -1509,7 +1508,7 @@ void CMonitor::changeWorkspace(const PHLWORKSPACE& pWorkspace, bool internal, bo
     }
 
     // set all LSes as not above fullscreen on workspace changes
-    for (auto const& ls : g_pCompositor->m_layers) {
+    for (auto const& ls : Desktop::layerState()->layers()) {
         if (ls->m_monitor == m_self)
             ls->m_aboveFullscreen = false;
     }
@@ -1518,20 +1517,36 @@ void CMonitor::changeWorkspace(const PHLWORKSPACE& pWorkspace, bool internal, bo
 
     g_pHyprRenderer->damageMonitor(m_self.lock());
 
-    g_pDesktopAnimationManager->setFullscreenFadeAnimation(
-        pWorkspace, pWorkspace->hasFullscreen() ? CDesktopAnimationManager::ANIMATION_TYPE_IN : CDesktopAnimationManager::ANIMATION_TYPE_OUT);
+    Animation::Workspace::setFullscreenFadeAnimation(
+        pWorkspace, Fullscreen::controller()->hasFullscreen(pWorkspace) ? Animation::Workspace::ANIMATION_TYPE_IN : Animation::Workspace::ANIMATION_TYPE_OUT);
 
     Config::monitorRuleMgr()->ensureVRR(m_self.lock());
 
-    g_pCompositor->updateSuspendedStates();
+    Desktop::globalWindowController()->updateSuspendedStates();
 
     if (m_activeSpecialWorkspace)
-        g_pDesktopAnimationManager->setFullscreenFadeAnimation(
-            m_activeSpecialWorkspace, m_activeSpecialWorkspace->hasFullscreen() ? CDesktopAnimationManager::ANIMATION_TYPE_IN : CDesktopAnimationManager::ANIMATION_TYPE_OUT);
+        Animation::Workspace::setFullscreenFadeAnimation(m_activeSpecialWorkspace,
+                                                         Fullscreen::controller()->hasFullscreen(m_activeSpecialWorkspace) ? Animation::Workspace::ANIMATION_TYPE_IN :
+                                                                                                                             Animation::Workspace::ANIMATION_TYPE_OUT);
 }
 
 void CMonitor::changeWorkspace(const WORKSPACEID& id, bool internal, bool noMouseMove, bool noFocus) {
     changeWorkspace(State::workspaceState()->query().id(id).run(), internal, noMouseMove, noFocus);
+}
+
+void CMonitor::setSpecialWorkspaceVisualState(bool active) {
+    static auto PDIMSPECIAL  = CConfigValue<Config::FLOAT>("decoration:dim_special");
+    static auto PBLURSPECIAL = CConfigValue<Config::INTEGER>("decoration:blur:special");
+    static auto PBLUR        = CConfigValue<Config::INTEGER>("decoration:blur:enabled");
+
+    const auto  ANIM = active ? "specialWorkspaceIn" : "specialWorkspaceOut";
+
+    m_specialFade->setConfig(Config::animationTree()->getAnimationPropertyConfig(ANIM));
+    *m_specialFade = active ? 1.F : 0.F;
+    m_specialDim->setConfig(Config::animationTree()->getAnimationPropertyConfig(ANIM));
+    *m_specialDim = active ? *PDIMSPECIAL : 0.F;
+    m_specialBlur->setConfig(Config::animationTree()->getAnimationPropertyConfig(ANIM));
+    *m_specialBlur = active && *PBLURSPECIAL && *PBLUR ? 1.F : 0.F;
 }
 
 void CMonitor::setSpecialWorkspace(const PHLWORKSPACE& pWorkspace) {
@@ -1540,8 +1555,7 @@ void CMonitor::setSpecialWorkspace(const PHLWORKSPACE& pWorkspace) {
 
     const auto POLDSPECIAL = m_activeSpecialWorkspace;
 
-    m_specialFade->setConfig(Config::animationTree()->getAnimationPropertyConfig(pWorkspace ? "specialWorkspaceIn" : "specialWorkspaceOut"));
-    *m_specialFade = pWorkspace ? 1.F : 0.F;
+    setSpecialWorkspaceVisualState(!!pWorkspace);
 
     g_pHyprRenderer->damageMonitor(m_self.lock());
 
@@ -1549,12 +1563,12 @@ void CMonitor::setSpecialWorkspace(const PHLWORKSPACE& pWorkspace) {
         // remove special if exists
         if (m_activeSpecialWorkspace) {
             m_activeSpecialWorkspace->m_visible = false;
-            g_pDesktopAnimationManager->startAnimation(m_activeSpecialWorkspace, CDesktopAnimationManager::ANIMATION_TYPE_OUT, false);
+            Animation::Workspace::startAnimation(m_activeSpecialWorkspace, Animation::Workspace::ANIMATION_TYPE_OUT, false);
             g_pEventManager->postEvent(SHyprIPCEvent{"activespecial", "," + m_name});
             g_pEventManager->postEvent(SHyprIPCEvent{"activespecialv2", ",," + m_name});
 
             // Reset layer surface state when closing special workspace
-            for (auto const& ls : g_pCompositor->m_layers) {
+            for (auto const& ls : Desktop::layerState()->layers()) {
                 if (ls->m_monitor == m_self)
                     ls->m_aboveFullscreen = false;
             }
@@ -1573,12 +1587,12 @@ void CMonitor::setSpecialWorkspace(const PHLWORKSPACE& pWorkspace) {
                 g_pInputManager->refocus();
         }
 
-        g_pDesktopAnimationManager->setFullscreenFadeAnimation(
-            m_activeWorkspace, m_activeWorkspace->hasFullscreen() ? CDesktopAnimationManager::ANIMATION_TYPE_IN : CDesktopAnimationManager::ANIMATION_TYPE_OUT);
+        Animation::Workspace::setFullscreenFadeAnimation(
+            m_activeWorkspace, Fullscreen::controller()->hasFullscreen(m_activeWorkspace) ? Animation::Workspace::ANIMATION_TYPE_IN : Animation::Workspace::ANIMATION_TYPE_OUT);
 
         Config::monitorRuleMgr()->ensureVRR(m_self.lock());
 
-        g_pCompositor->updateSuspendedStates();
+        Desktop::globalWindowController()->updateSuspendedStates();
 
         Event::bus()->m_events.workspace.specialActive.emit(nullptr, m_self.lock());
 
@@ -1587,7 +1601,7 @@ void CMonitor::setSpecialWorkspace(const PHLWORKSPACE& pWorkspace) {
 
     if (m_activeSpecialWorkspace) {
         m_activeSpecialWorkspace->m_visible = false;
-        g_pDesktopAnimationManager->startAnimation(m_activeSpecialWorkspace, CDesktopAnimationManager::ANIMATION_TYPE_OUT, false);
+        Animation::Workspace::startAnimation(m_activeSpecialWorkspace, Animation::Workspace::ANIMATION_TYPE_OUT, false);
     }
 
     bool wasActive = false;
@@ -1595,6 +1609,7 @@ void CMonitor::setSpecialWorkspace(const PHLWORKSPACE& pWorkspace) {
     const auto PMONITOR = pWorkspace->m_monitor.lock();
 
     if (PMONITOR && PMONITOR->m_activeSpecialWorkspace == pWorkspace) {
+        PMONITOR->setSpecialWorkspaceVisualState(false);
         PMONITOR->m_activeSpecialWorkspace.reset();
         g_layoutManager->recalculateMonitor(PMONITOR, Layout::CLayoutManager::RECALCULATE_MONITOR_REASON_TOGGLE_SPECIAL_WORKSPACE);
         g_pHyprRenderer->damageMonitor(PMONITOR);
@@ -1602,14 +1617,15 @@ void CMonitor::setSpecialWorkspace(const PHLWORKSPACE& pWorkspace) {
         g_pEventManager->postEvent(SHyprIPCEvent{"activespecialv2", ",," + PMONITOR->m_name});
 
         // Reset layer surfaces on the old monitor when special workspace is stolen
-        for (auto const& ls : g_pCompositor->m_layers) {
+        for (auto const& ls : Desktop::layerState()->layers()) {
             if (ls->m_monitor == PMONITOR)
                 ls->m_aboveFullscreen = false;
         }
 
         const auto PACTIVEWORKSPACE = PMONITOR->m_activeWorkspace;
-        g_pDesktopAnimationManager->setFullscreenFadeAnimation(
-            PACTIVEWORKSPACE, PACTIVEWORKSPACE && PACTIVEWORKSPACE->hasFullscreen() ? CDesktopAnimationManager::ANIMATION_TYPE_IN : CDesktopAnimationManager::ANIMATION_TYPE_OUT);
+        Animation::Workspace::setFullscreenFadeAnimation(PACTIVEWORKSPACE,
+                                                         PACTIVEWORKSPACE && Fullscreen::controller()->hasFullscreen(PACTIVEWORKSPACE) ? Animation::Workspace::ANIMATION_TYPE_IN :
+                                                                                                                                         Animation::Workspace::ANIMATION_TYPE_OUT);
 
         wasActive = true;
     }
@@ -1620,7 +1636,7 @@ void CMonitor::setSpecialWorkspace(const PHLWORKSPACE& pWorkspace) {
     m_activeSpecialWorkspace->m_visible = true;
 
     // Reset layer surface state when opening special workspace
-    for (auto const& ls : g_pCompositor->m_layers) {
+    for (auto const& ls : Desktop::layerState()->layers()) {
         if (ls->m_monitor == m_self)
             ls->m_aboveFullscreen = false;
     }
@@ -1635,9 +1651,9 @@ void CMonitor::setSpecialWorkspace(const PHLWORKSPACE& pWorkspace) {
         pWorkspace->m_events.activeChanged.emit();
 
     if (!wasActive)
-        g_pDesktopAnimationManager->startAnimation(pWorkspace, CDesktopAnimationManager::ANIMATION_TYPE_IN, true);
+        Animation::Workspace::startAnimation(pWorkspace, Animation::Workspace::ANIMATION_TYPE_IN, true);
 
-    for (auto const& w : g_pCompositor->m_windows) {
+    for (auto const& w : Desktop::windowState()->windows()) {
         if (w->m_workspace == pWorkspace) {
             w->m_monitor = m_self;
             w->updateSurfaceScaleTransformDetails();
@@ -1647,11 +1663,11 @@ void CMonitor::setSpecialWorkspace(const PHLWORKSPACE& pWorkspace) {
             if (w->m_isFloating && VECNOTINRECT(MIDDLE, m_position.x, m_position.y, m_position.x + m_size.x, m_position.y + m_size.y) && !w->isX11OverrideRedirect()) {
                 // if it's floating and the middle isn't on the current mon, move it to the center
                 const auto PMONFROMMIDDLE = State::monitorState()->query().vec(MIDDLE).run();
-                Vector2D   pos            = w->m_realPosition->goal();
+                Vector2D   pos            = w->position(Desktop::View::IGeometric::GEOMETRIC_GOAL);
                 if (VECNOTINRECT(MIDDLE, PMONFROMMIDDLE->m_position.x, PMONFROMMIDDLE->m_position.y, PMONFROMMIDDLE->m_position.x + PMONFROMMIDDLE->m_size.x,
                                  PMONFROMMIDDLE->m_position.y + PMONFROMMIDDLE->m_size.y)) {
                     // not on any monitor, center
-                    pos = middle() - w->m_realSize->goal() / 2.f;
+                    pos = middle() - w->size(Desktop::View::IGeometric::GEOMETRIC_GOAL) / 2.f;
                 } else
                     pos = pos - PMONFROMMIDDLE->m_position + m_position;
 
@@ -1674,18 +1690,30 @@ void CMonitor::setSpecialWorkspace(const PHLWORKSPACE& pWorkspace) {
 
     g_pHyprRenderer->damageMonitor(m_self.lock());
 
-    g_pDesktopAnimationManager->setFullscreenFadeAnimation(
-        pWorkspace, pWorkspace->hasFullscreen() ? CDesktopAnimationManager::ANIMATION_TYPE_IN : CDesktopAnimationManager::ANIMATION_TYPE_OUT);
+    Animation::Workspace::setFullscreenFadeAnimation(
+        pWorkspace, Fullscreen::controller()->hasFullscreen(pWorkspace) ? Animation::Workspace::ANIMATION_TYPE_IN : Animation::Workspace::ANIMATION_TYPE_OUT);
 
     Config::monitorRuleMgr()->ensureVRR(m_self.lock());
 
-    g_pCompositor->updateSuspendedStates();
+    Desktop::globalWindowController()->updateSuspendedStates();
 
     Event::bus()->m_events.workspace.specialActive.emit(pWorkspace, m_self.lock());
 }
 
 void CMonitor::setSpecialWorkspace(const WORKSPACEID& id) {
     setSpecialWorkspace(State::workspaceState()->query().id(id).run());
+}
+
+PHLWORKSPACE CMonitor::getCurrentWorkspace() {
+    const auto MONITOR = m_self.lock();
+    if (!MONITOR)
+        return nullptr;
+
+    // Check special workspace first as it renders on top of regular workspaces
+    if (MONITOR->m_activeSpecialWorkspace)
+        return MONITOR->m_activeSpecialWorkspace;
+
+    return MONITOR->m_activeWorkspace;
 }
 
 void CMonitor::moveTo(const Vector2D& pos) {
@@ -1701,7 +1729,7 @@ void CMonitor::moveTo(const Vector2D& pos) {
 
     const auto DELTA = pos - OLD_POSITION;
 
-    for (const auto& w : g_pCompositor->m_windows) {
+    for (const auto& w : Desktop::windowState()->windows()) {
         if (!validMapped(w) || !w->m_isFloating || w->m_monitor != m_self)
             continue;
 
@@ -1778,7 +1806,8 @@ uint32_t CMonitor::isSolitaryBlocked(bool full) {
         return reasons;
     }
 
-    if (!inFullscreenMode()) {
+    // Monitor considers only FSMODE_FULLSCREEN as FS
+    if (Fullscreen::controller()->getFullscreenModes(m_self.lock()).internal != Fullscreen::FSMODE_FULLSCREEN) {
         reasons |= SC_WINDOWED;
         if (!full)
             return reasons;
@@ -1826,7 +1855,7 @@ uint32_t CMonitor::isSolitaryBlocked(bool full) {
             return reasons;
     }
 
-    const auto PCANDIDATE = getFullscreenWindow();
+    const auto PCANDIDATE = Fullscreen::controller()->getFullscreenWindow(m_self.lock());
 
     if (!PCANDIDATE) {
         reasons |= SC_CANDIDATE;
@@ -1839,8 +1868,8 @@ uint32_t CMonitor::isSolitaryBlocked(bool full) {
             return reasons;
     }
 
-    if (PCANDIDATE->m_realSize->value() != m_size || PCANDIDATE->m_realPosition->value() != m_position || PCANDIDATE->m_realPosition->isBeingAnimated() ||
-        PCANDIDATE->m_realSize->isBeingAnimated()) {
+    if (PCANDIDATE->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT) != m_size || PCANDIDATE->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT) != m_position ||
+        PCANDIDATE->positionAnimation()->isBeingAnimated() || PCANDIDATE->sizeAnimation()->isBeingAnimated()) {
         reasons |= SC_TRANSFORM;
         if (!full)
             return reasons;
@@ -1853,15 +1882,24 @@ uint32_t CMonitor::isSolitaryBlocked(bool full) {
     }
 
     for (auto const& topls : m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_TOP]) {
-        if (topls->m_alpha->value() != 0.f) {
+        if (topls->alpha()[LS_ALPHA_FADE]->value() != 0.F) {
             reasons |= SC_OVERLAYS;
             if (!full)
                 return reasons;
         }
     }
 
-    for (auto const& w : g_pCompositor->m_windows) {
-        if (w == PCANDIDATE || (!w->m_isMapped && !w->m_fadingOut) || !w->visible())
+    for (auto const& fadeout : Desktop::fadingOutState()->fadeouts()) {
+        if (!fadeout || fadeout->monitor() != m_self)
+            continue;
+
+        reasons |= SC_FADEOUT;
+        if (!full)
+            return reasons;
+    }
+
+    for (auto const& w : Desktop::windowState()->windows()) {
+        if (w == PCANDIDATE || !w->m_isMapped || !w->visible())
             continue;
 
         if (w->workspaceID() == PCANDIDATE->workspaceID() && w->m_isFloating && w->isAllowedOverFullscreen() && w->visibleOnMonitor(m_self.lock())) {
@@ -1897,7 +1935,7 @@ void CMonitor::recheckSolitary() {
     if (isSolitaryBlocked())
         return;
 
-    m_solitaryClient = getFullscreenWindow();
+    m_solitaryClient = Fullscreen::controller()->getFullscreenWindow(m_self.lock());
 }
 
 uint8_t CMonitor::isTearingBlocked(bool full) {
@@ -1936,7 +1974,7 @@ uint8_t CMonitor::isTearingBlocked(bool full) {
     }
 
     // TODO: remove this when kernel allows tearing + hw cursor updated
-    if (g_pPointerManager->hasVisibleHWCursor(m_self.lock()))
+    if (Pointer::mgr()->hasVisibleHWCursor(m_self.lock()))
         reasons |= TC_HW_CURSOR;
 
     if (m_solitaryClient.expired()) {
@@ -1951,7 +1989,7 @@ uint8_t CMonitor::isTearingBlocked(bool full) {
 }
 
 void CMonitor::updateSurfaceScaleTransformDetails() {
-    for (auto const& w : g_pCompositor->m_windows) {
+    for (auto const& w : Desktop::windowState()->windows()) {
         if (w->m_monitor == m_self)
             w->updateSurfaceScaleTransformDetails();
     }
@@ -1990,8 +2028,9 @@ uint16_t CMonitor::isDSBlocked(bool full) {
     }
 
     if (*PDIRECTSCANOUT == 2) {
-        const auto FSWINDOW = getFullscreenWindow();
-        if (!PWORKSPACE || !inFullscreenMode() || !FSWINDOW) {
+        const auto FSWINDOW = Fullscreen::controller()->getFullscreenWindow(m_self.lock());
+
+        if (!PWORKSPACE || !FSWINDOW || Fullscreen::controller()->getFullscreenModes(FSWINDOW).internal != Fullscreen::FSMODE_FULLSCREEN) {
             reasons |= DS_BLOCK_WINDOWED;
             if (!full)
                 return reasons;
@@ -2014,7 +2053,7 @@ uint16_t CMonitor::isDSBlocked(bool full) {
             return reasons;
     }
 
-    if (g_pPointerManager->softwareLockedFor(m_self.lock())) {
+    if (Pointer::mgr()->softwareLockedFor(m_self.lock())) {
         reasons |= DS_BLOCK_SW;
         if (!full)
             return reasons;
@@ -2150,11 +2189,13 @@ bool CMonitor::attemptDirectScanout() {
     if (g_pHyprRenderer->explicitSyncSupported() && isMultiGPU()) {
         auto sync = g_pHyprRenderer->createSyncFDManager();
 
-        if (sync->fd().isValid()) {
+        if (sync && sync->isValid()) {
             m_inFence = sync->takeFd();
             m_output->state->setExplicitInFence(m_inFence.get());
-        } else
+        } else {
+            m_inFence.reset();
             m_output->state->resetExplicitFences(); // good luck.
+        }
     } else
         m_output->state->resetExplicitFences();
 
@@ -2259,7 +2300,7 @@ bool CMonitor::shouldUseSoftwareCursors() {
     switch (*PNOHW) {
         case 0: return false;
         case 1: return true;
-        case 2: return g_pHyprRenderer->isNvidia() && (g_pHyprRenderer->isMgpu() || g_pCompositor->isVRRActiveOnAnyMonitor());
+        case 2: return g_pHyprRenderer->isNvidia() && (g_pHyprRenderer->isMgpu() || State::monitorLayoutController()->isVRRActiveOnAnyMonitor());
         default: break;
     }
 
@@ -2408,44 +2449,10 @@ bool CMonitor::inHDR() {
     return m_output->state->state().hdrMetadata.hdmi_metadata_type1.eotf == 2;
 }
 
-bool CMonitor::inFullscreenMode() {
-    // Check special workspace first since it renders on top of regular workspaces
-    if (m_activeSpecialWorkspace &&
-        ((m_activeSpecialWorkspace->m_hasFullscreenWindow && m_activeSpecialWorkspace->m_fullscreenMode == FSMODE_FULLSCREEN) ||
-         (m_activeSpecialWorkspace->m_space && m_activeSpecialWorkspace->m_space->algorithm() && m_activeSpecialWorkspace->m_space->algorithm()->layoutFullscreenCoversMonitor())))
-        return true;
-    return m_activeWorkspace &&
-        ((m_activeWorkspace->m_hasFullscreenWindow && m_activeWorkspace->m_fullscreenMode == FSMODE_FULLSCREEN) ||
-         (m_activeWorkspace->m_space && m_activeWorkspace->m_space->algorithm() && m_activeWorkspace->m_space->algorithm()->layoutFullscreenCoversMonitor()));
-}
-
-PHLWINDOW CMonitor::getFullscreenWindow() {
-    // Check special workspace first since it renders on top of regular workspaces
-    if (m_activeSpecialWorkspace && m_activeSpecialWorkspace->m_hasFullscreenWindow && m_activeSpecialWorkspace->m_fullscreenMode == FSMODE_FULLSCREEN)
-        return m_activeSpecialWorkspace->getFullscreenWindow();
-
-    if (m_activeSpecialWorkspace && m_activeSpecialWorkspace->m_space && m_activeSpecialWorkspace->m_space->algorithm() &&
-        m_activeSpecialWorkspace->m_space->algorithm()->layoutFullscreenCoversMonitor()) {
-        const auto TARGET = m_activeSpecialWorkspace->m_space->algorithm()->layoutFullscreenTarget();
-        return TARGET ? TARGET->window() : nullptr;
-    }
-
-    if (m_activeWorkspace && m_activeWorkspace->m_hasFullscreenWindow && m_activeWorkspace->m_fullscreenMode == FSMODE_FULLSCREEN)
-        return m_activeWorkspace->getFullscreenWindow();
-
-    if (m_activeWorkspace && m_activeWorkspace->m_space && m_activeWorkspace->m_space->algorithm() && m_activeWorkspace->m_space->algorithm()->layoutFullscreenCoversMonitor()) {
-        const auto TARGET = m_activeWorkspace->m_space->algorithm()->layoutFullscreenTarget();
-        return TARGET ? TARGET->window() : nullptr;
-    }
-
-    return nullptr;
-}
-
 std::optional<NColorManagement::PImageDescription> CMonitor::getFSImageDescription() {
-    if (!inFullscreenMode())
-        return {};
 
-    const auto FS_WINDOW = getFullscreenWindow();
+    const auto FS_WINDOW = Fullscreen::controller()->getFullscreenWindow(m_self.lock());
+
     if (!FS_WINDOW)
         return {};
 
@@ -2538,16 +2545,40 @@ bool CMonitor::doesNoShaderCM() {
 }
 
 static std::vector<uint16_t> resampleInterleavedToKms(const SVCGTTable16& t, size_t gammaSize) {
-    std::vector<uint16_t> out;
-    out.resize(gammaSize * 3);
+    const size_t entries = sc<size_t>(t.entries);
 
-    //
+    if (gammaSize == 0 || entries == 0)
+        return {};
+
+    if (t.ch[0].size() < entries || t.ch[1].size() < entries || t.ch[2].size() < entries)
+        return {};
+
+    std::vector<uint16_t> out(gammaSize * 3);
+
+    // No resampling is needed when the VCGT already matches the KMS LUT size.
+    if (gammaSize == entries) {
+        const uint16_t* __restrict red   = t.ch[0].data();
+        const uint16_t* __restrict green = t.ch[1].data();
+        const uint16_t* __restrict blue  = t.ch[2].data();
+        uint16_t* __restrict dst         = out.data();
+
+        for (size_t i = 0; i < gammaSize; ++i) {
+            const size_t dstIndex = i * 3;
+
+            dst[dstIndex + 0] = red[i];
+            dst[dstIndex + 1] = green[i];
+            dst[dstIndex + 2] = blue[i];
+        }
+
+        return out;
+    }
+
     auto sample = [&](int c, float x) -> uint16_t {
         const float maxX = t.entries - 1;
         x                = std::clamp(x, 0.F, maxX);
 
-        const size_t i0 = (size_t)std::floor(x);
-        const size_t i1 = std::min(i0 + 1, (size_t)t.entries - 1);
+        const size_t i0 = sc<size_t>(std::floor(x));
+        const size_t i1 = std::min(i0 + 1, sc<size_t>(t.entries - 1));
         const float  f  = x - sc<float>(i0);
 
         const float  v0 = sc<float>(t.ch[c][i0]);
@@ -2556,19 +2587,16 @@ static std::vector<uint16_t> resampleInterleavedToKms(const SVCGTTable16& t, siz
 
         int64_t      vi = std::round(v);
         vi              = std::clamp(vi, sc<int64_t>(0), sc<int64_t>(65535));
+
         return sc<uint16_t>(vi);
     };
 
     for (size_t i = 0; i < gammaSize; ++i) {
-        float          x = sc<float>(i) * sc<float>(t.entries - 1) / sc<float>(gammaSize - 1);
+        const float x = sc<float>(i) * sc<float>(t.entries - 1) / sc<float>(gammaSize - 1);
 
-        const uint16_t r = sample(0, x);
-        const uint16_t g = sample(1, x);
-        const uint16_t b = sample(2, x);
-
-        out[i * 3 + 0] = r;
-        out[i * 3 + 1] = g;
-        out[i * 3 + 2] = b;
+        out[i * 3 + 0] = sample(0, x);
+        out[i * 3 + 1] = sample(1, x);
+        out[i * 3 + 2] = sample(2, x);
     }
 
     return out;
@@ -2737,7 +2765,7 @@ PImageDescription CMonitor::workBufferImageDescription() {
     const auto& cached = m_cachedInternalDescription->value();
 
     // HDR
-    if (isHDRLikeTF || value.windowsScRGB || *PFP16TF != 0) {
+    if (isHDRLikeTF || *PFP16TF != 0) {
         if (cached.transferFunction != LINEAR_IMAGE_DESCRIPTION->value().transferFunction || cached.luminances != value.luminances)
             m_cachedInternalDescription = LINEAR_IMAGE_DESCRIPTION->with(value.luminances);
         return m_cachedInternalDescription;
@@ -2767,4 +2795,21 @@ WP<CMonitorResources> CMonitor::resources() {
         m_resources->setImageDescription(DESC);
 
     return m_resources;
+}
+
+bool CMonitor::trySetFormat(std::span<const uint32_t> formats) {
+    for (auto fmt : formats) {
+        m_output->state->setFormat(fmt);
+        m_prevDrmFormat = m_drmFormat;
+        m_drmFormat     = fmt;
+
+        const auto fmtName = drmFormatToString(fmt);
+        if (!m_state.test()) {
+            Log::logger->log(Log::ERR, "output {} failed basic test on format {}", m_name, fmtName);
+        } else {
+            Log::logger->log(Log::DEBUG, "output {} succeeded basic test on format {}", m_name, fmtName);
+            return true;
+        }
+    }
+    return false;
 }

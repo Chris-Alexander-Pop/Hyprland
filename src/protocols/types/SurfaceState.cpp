@@ -35,6 +35,16 @@ CRegion SSurfaceState::accumulateBufferDamage() {
     return bufferDamage;
 }
 
+CRegion SSurfaceState::effectiveInputRegion() const {
+    if (size.x <= 0 || size.y <= 0)
+        return {};
+
+    if (inputIsInfinite)
+        return CBox{{}, size};
+
+    return input.copy().intersect(CBox{{}, size});
+}
+
 void SSurfaceState::updateSynchronousTexture(SP<Render::ITexture> lastTexture) {
     auto [dataPtr, fmt, size] = buffer->beginDataPtr(0);
     if (dataPtr) {
@@ -63,6 +73,7 @@ void SSurfaceState::reset() {
     bufferDamage.clear();
 
     callbacks.clear();
+    presentationFeedbacks.clear();
     lockMask = LOCK_REASON_NONE;
 
     barrierSet    = false;
@@ -70,6 +81,7 @@ void SSurfaceState::reset() {
     fifoScheduled = false;
 
     pendingTimeout.reset();
+    commitTimingTarget.reset();
     timer.reset(); // CEventLoopManager::nudgeTimers should handle it eventually
 }
 
@@ -92,8 +104,10 @@ void SSurfaceState::updateFrom(SSurfaceState& ref) {
         bufferDamage.clear();
     }
 
-    if (ref.updated.bits.input)
-        input = ref.input;
+    if (ref.updated.bits.input) {
+        input           = ref.input;
+        inputIsInfinite = ref.inputIsInfinite;
+    }
 
     if (ref.updated.bits.opaque)
         opaque = ref.opaque;
@@ -119,6 +133,12 @@ void SSurfaceState::updateFrom(SSurfaceState& ref) {
     if (ref.updated.bits.frame) {
         callbacks.insert(callbacks.end(), std::make_move_iterator(ref.callbacks.begin()), std::make_move_iterator(ref.callbacks.end()));
         ref.callbacks.clear();
+    }
+
+    if (ref.updated.bits.presentation) {
+        presentationFeedbacks.insert(presentationFeedbacks.end(), std::make_move_iterator(ref.presentationFeedbacks.begin()),
+                                     std::make_move_iterator(ref.presentationFeedbacks.end()));
+        ref.presentationFeedbacks.clear();
     }
 
     if (ref.barrierSet)

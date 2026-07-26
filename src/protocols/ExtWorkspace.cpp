@@ -6,6 +6,7 @@
 #include <utility>
 #include "core/Output.hpp"
 #include "../state/MonitorState.hpp"
+#include "../state/WorkspacePlacementController.hpp"
 #include "../state/WorkspaceState.hpp"
 
 CExtWorkspaceGroupResource::CExtWorkspaceGroupResource(WP<CExtWorkspaceManagerResource> manager, UP<CExtWorkspaceGroupHandleV1> resource, PHLMONITORREF monitor) :
@@ -50,7 +51,7 @@ CExtWorkspaceGroupResource::CExtWorkspaceGroupResource(WP<CExtWorkspaceManagerRe
 }
 
 bool CExtWorkspaceGroupResource::good() const {
-    return m_resource;
+    return !!m_resource;
 }
 
 WP<CExtWorkspaceGroupResource> CExtWorkspaceGroupResource::fromResource(wl_resource* resource) {
@@ -100,6 +101,13 @@ CExtWorkspaceResource::CExtWorkspaceResource(WP<CExtWorkspaceManagerResource> ma
             m_manager->scheduleDone();
     });
 
+    m_listeners.idChanged = m_workspace->m_events.idChanged.listen([this] {
+        m_resource->sendName(m_workspace->m_name.c_str());
+
+        if (m_manager)
+            m_manager->scheduleDone();
+    });
+
     m_resource->setOnDestroy([this](auto) { PROTO::extWorkspace->destroyWorkspace(m_self); });
     m_resource->setDestroy([this](auto) { PROTO::extWorkspace->destroyWorkspace(m_self); });
 
@@ -136,14 +144,17 @@ CExtWorkspaceResource::CExtWorkspaceResource(WP<CExtWorkspaceManagerResource> ma
 }
 
 bool CExtWorkspaceResource::good() const {
-    return m_resource;
+    return !!m_resource;
 }
 
 bool CExtWorkspaceResource::isActive() const {
     if (!m_workspace)
         return false;
 
-    auto const& monitor      = m_workspace->m_monitor;
+    auto const& monitor = m_workspace->m_monitor;
+    if (!monitor)
+        return false;
+
     auto const& cmpWorkspace = m_workspace->m_isSpecialWorkspace ? monitor->m_activeSpecialWorkspace : monitor->m_activeWorkspace;
     return m_workspace == cmpWorkspace;
 }
@@ -203,7 +214,7 @@ void CExtWorkspaceResource::commit() {
         m_workspace->m_monitor->setSpecialWorkspace(nullptr);
 
     if (m_pendingState.targetMonitor && m_workspace && m_workspace->m_monitor != m_pendingState.targetMonitor)
-        g_pCompositor->moveWorkspaceToMonitor(m_workspace.lock(), m_pendingState.targetMonitor.lock(), true);
+        State::workspacePlacementController()->moveWorkspaceToMonitor(m_workspace.lock(), m_pendingState.targetMonitor.lock(), true);
 
     if (m_pendingState.activate && !isActive() && m_workspace)
         m_workspace->m_monitor->changeWorkspace(m_workspace.lock());
@@ -248,7 +259,7 @@ void CExtWorkspaceManagerResource::init(WP<CExtWorkspaceManagerResource> self) {
 }
 
 bool CExtWorkspaceManagerResource::good() const {
-    return m_resource;
+    return !!m_resource;
 }
 
 void CExtWorkspaceManagerResource::scheduleDone() {

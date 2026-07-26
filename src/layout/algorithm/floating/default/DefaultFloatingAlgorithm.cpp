@@ -6,6 +6,7 @@
 #include "../../../space/Space.hpp"
 
 #include "../../../../Compositor.hpp"
+#include "../../../../desktop/state/WindowState.hpp"
 #include "../../../../output/Monitor.hpp"
 #include "../../../../state/MonitorState.hpp"
 
@@ -49,7 +50,7 @@ void CDefaultFloatingAlgorithm::newTarget(SP<ITarget> target) {
         const auto WINDOW = target->window();
 
         // set this here so that expressions can use it. This could be wrong of course.
-        WINDOW->m_realSize->setValueAndWarp(DESIRED_GEOM ? DESIRED_GEOM->size : DEFAULT_SIZE);
+        WINDOW->sizeAnimation()->setValueAndWarp(DESIRED_GEOM ? DESIRED_GEOM->size : DEFAULT_SIZE);
 
         if (WINDOW->m_ruleApplicator->static_.size) {
             const auto COMPUTED = WINDOW->calculateExpression(*WINDOW->m_ruleApplicator->static_.size);
@@ -60,7 +61,7 @@ void CDefaultFloatingAlgorithm::newTarget(SP<ITarget> target) {
                 windowGeometry.h = COMPUTED->y;
 
                 // update for pos to work with size.
-                WINDOW->m_realPosition->setValueAndWarp(*COMPUTED);
+                WINDOW->positionAnimation()->setValueAndWarp(*COMPUTED);
             }
         }
 
@@ -106,14 +107,13 @@ void CDefaultFloatingAlgorithm::newTarget(SP<ITarget> target) {
         const auto PWINDOW = WTARGET->window();
 
         if (PWINDOW->m_X11DoesntWantBorders || (PWINDOW->m_isX11 && PWINDOW->isX11OverrideRedirect())) {
-            PWINDOW->m_realPosition->warp();
-            PWINDOW->m_realSize->warp();
+            PWINDOW->finishAnimation();
         }
 
         if (!PWINDOW->isX11OverrideRedirect())
-            g_pCompositor->changeWindowZOrder(PWINDOW, true);
+            Desktop::windowState()->raise(PWINDOW);
         else {
-            PWINDOW->m_pendingReportedSize = PWINDOW->m_realSize->goal();
+            PWINDOW->m_pendingReportedSize = PWINDOW->size(Desktop::View::IGeometric::GEOMETRIC_GOAL);
             PWINDOW->m_reportedSize        = PWINDOW->m_pendingReportedSize;
         }
     }

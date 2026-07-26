@@ -1,7 +1,7 @@
 #include "DataDevice.hpp"
 #include <algorithm>
 #include "../../managers/SeatManager.hpp"
-#include "../../managers/PointerManager.hpp"
+#include "../../pointer/PointerManager.hpp"
 #include "../../managers/eventLoop/EventLoopManager.hpp"
 #include "../../Compositor.hpp"
 #include "../../render/pass/TexPassElement.hpp"
@@ -10,7 +10,7 @@
 #include "../../xwayland/XWayland.hpp"
 #include "../../xwayland/Server.hpp"
 #include "../../managers/input/InputManager.hpp"
-#include "../../managers/cursor/CursorShapeOverrideController.hpp"
+#include "../../pointer/cursor/CursorShapeOverrideController.hpp"
 #include "../../output/Monitor.hpp"
 #include "../../render/Renderer.hpp"
 #include "../../xwayland/Dnd.hpp"
@@ -561,7 +561,7 @@ void CWLDataDeviceProtocol::initiateDrag(WP<CWLDataSourceResource> currentSource
         abortDrag();
     }
 
-    Cursor::overrideController->setOverride("grabbing", Cursor::CURSOR_OVERRIDE_DND);
+    Pointer::Cursor::overrideController->setOverride("grabbing", Pointer::Cursor::CURSOR_OVERRIDE_DND);
     m_dnd.overriddenCursor = true;
 
     // For touch-initiated drags, anchor the drag icon to the touch point
@@ -570,7 +570,7 @@ void CWLDataDeviceProtocol::initiateDrag(WP<CWLDataSourceResource> currentSource
     if (g_pInputManager->m_lastInputTouch)
         m_dnd.touchPos = g_pInputManager->m_touchData.lastTouchPos;
 
-    LOGM(Log::DEBUG, "initiateDrag: source {:x}, surface: {:x}, origin: {:x}", (uintptr_t)currentSource.get(), (uintptr_t)dragSurface, (uintptr_t)origin);
+    LOGM(Log::DEBUG, "initiateDrag: source {:x}, surface: {:x}, origin: {:x}", (uintptr_t)currentSource.get(), (uintptr_t)dragSurface.get(), (uintptr_t)origin.get());
 
     currentSource->m_used = true;
 
@@ -585,7 +585,7 @@ void CWLDataDeviceProtocol::initiateDrag(WP<CWLDataSourceResource> currentSource
                 return;
             }
 
-            if (m_dnd.dndSurface->m_current.texture <= 0 && m_dnd.dndSurface->m_mapped) {
+            if (!m_dnd.dndSurface->m_current.texture && m_dnd.dndSurface->m_mapped) {
                 m_dnd.dndSurface->unmap();
                 return;
             }
@@ -752,7 +752,7 @@ void CWLDataDeviceProtocol::dropDrag() {
     if (m_dnd.focusedDevice->getX11()) {
         m_dnd.focusedDevice->sendLeave();
         if (m_dnd.overriddenCursor)
-            Cursor::overrideController->unsetOverride(Cursor::CURSOR_OVERRIDE_DND);
+            Pointer::Cursor::overrideController->unsetOverride(Pointer::Cursor::CURSOR_OVERRIDE_DND);
         m_dnd.overriddenCursor = false;
         cleanupDndState(true, true, true);
         return;
@@ -761,7 +761,7 @@ void CWLDataDeviceProtocol::dropDrag() {
 
     m_dnd.focusedDevice->sendLeave();
     if (m_dnd.overriddenCursor)
-        Cursor::overrideController->unsetOverride(Cursor::CURSOR_OVERRIDE_DND);
+        Pointer::Cursor::overrideController->unsetOverride(Pointer::Cursor::CURSOR_OVERRIDE_DND);
     m_dnd.overriddenCursor = false;
     cleanupDndState(false, false, false);
 }
@@ -802,7 +802,7 @@ void CWLDataDeviceProtocol::abortDrag() {
     cleanupDndState(false, false, false);
 
     if (m_dnd.overriddenCursor)
-        Cursor::overrideController->unsetOverride(Cursor::CURSOR_OVERRIDE_DND);
+        Pointer::Cursor::overrideController->unsetOverride(Pointer::Cursor::CURSOR_OVERRIDE_DND);
     m_dnd.overriddenCursor = false;
 
     if (!m_dnd.focusedDevice && !m_dnd.currentSource)
@@ -850,7 +850,7 @@ void CWLDataDeviceProtocol::renderDND(PHLMONITOR pMonitor, const Time::steady_tp
 }
 
 bool CWLDataDeviceProtocol::dndActive() {
-    return m_dnd.currentSource;
+    return !!m_dnd.currentSource;
 }
 
 void CWLDataDeviceProtocol::abortDndIfPresent() {

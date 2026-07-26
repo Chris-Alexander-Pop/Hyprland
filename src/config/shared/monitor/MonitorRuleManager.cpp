@@ -7,10 +7,12 @@
 #include "../../../render/Renderer.hpp"
 #include "../../../event/EventBus.hpp"
 #include "../../../managers/eventLoop/EventLoopManager.hpp"
+#include "../../../managers/fullscreen/FullscreenController.hpp"
 #include "../../../state/MonitorLayoutController.hpp"
 #include "../../../state/MonitorState.hpp"
 
 #include <ranges>
+#include <hyprutils/utils/ScopeGuard.hpp>
 
 using namespace Config;
 
@@ -130,7 +132,9 @@ void CMonitorRuleManager::scheduleReload() {
 }
 
 void CMonitorRuleManager::ensureMonitorStatus() {
-    std::vector<PHLMONITOR> monsForRefresh;
+    std::vector<PHLMONITOR>       monsForRefresh;
+
+    Hyprutils::Utils::CScopeGuard x([this] { m_events.stateReloaded.emit(); });
 
     for (auto const& m : State::monitorState()->allMonitors()) {
         if (!m || !m->m_output || m->m_isUnsafeFallback)
@@ -171,7 +175,7 @@ void CMonitorRuleManager::ensureMonitorStatus() {
             m->m_activeMonitorRule.m_disabled ? m->onDisconnect() : m->onConnect(true);
     }
 
-    for (auto const& w : g_pCompositor->m_windows) {
+    for (auto const& w : Desktop::windowState()->windows()) {
         w->updateSurfaceScaleTransformDetails();
     }
 
@@ -213,8 +217,8 @@ void CMonitorRuleManager::ensureVRR(PHLMONITOR pMonitor) {
 
         if (USEVRR == 1) {
             bool wantVRR = true;
-            if (PWORKSPACE && PWORKSPACE->m_hasFullscreenWindow && (PWORKSPACE->m_fullscreenMode & FSMODE_FULLSCREEN))
-                wantVRR = !PWORKSPACE->getFullscreenWindow()->m_ruleApplicator->noVRR().valueOrDefault();
+            if (PWORKSPACE && Fullscreen::controller()->getFullscreenModes(PWORKSPACE).internal == Fullscreen::FSMODE_FULLSCREEN)
+                wantVRR = !Fullscreen::controller()->getFullscreenWindow(PWORKSPACE)->m_ruleApplicator->noVRR().valueOrDefault();
 
             if (wantVRR) {
                 if (!m->m_vrrActive) {
@@ -242,15 +246,13 @@ void CMonitorRuleManager::ensureVRR(PHLMONITOR pMonitor) {
             }
             return;
         } else if (USEVRR == 2 || USEVRR == 3) {
-            if (!PWORKSPACE)
-                return; // ???
 
-            bool wantVRR = PWORKSPACE->m_hasFullscreenWindow && (PWORKSPACE->m_fullscreenMode & FSMODE_FULLSCREEN);
-            if (wantVRR && PWORKSPACE->getFullscreenWindow()->m_ruleApplicator->noVRR().valueOrDefault())
+            bool wantVRR = Fullscreen::controller()->getFullscreenModes(PWORKSPACE).internal == Fullscreen::FSMODE_FULLSCREEN;
+            if (wantVRR && Fullscreen::controller()->getFullscreenWindow(PWORKSPACE)->m_ruleApplicator->noVRR().valueOrDefault())
                 wantVRR = false;
 
             if (wantVRR && USEVRR == 3) {
-                const auto contentType = PWORKSPACE->getFullscreenWindow()->getContentType();
+                const auto contentType = Fullscreen::controller()->getFullscreenWindow(PWORKSPACE)->getContentType();
                 wantVRR                = contentType == NContentType::CONTENT_TYPE_GAME || contentType == NContentType::CONTENT_TYPE_VIDEO;
             }
 

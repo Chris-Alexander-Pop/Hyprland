@@ -4,6 +4,7 @@
 #include "../../../helpers/MiscFunctions.hpp"
 #include "../../../Compositor.hpp"
 #include "../../../managers/TokenManager.hpp"
+#include "../../../managers/fullscreen/FullscreenController.hpp"
 #include "../../../desktop/state/FocusState.hpp"
 #include "../../../protocols/types/ContentType.hpp"
 #include "../../../config/shared/parserUtils/ParserUtils.hpp"
@@ -253,6 +254,7 @@ static std::expected<WindowRuleEffectValue, std::string> parseWindowRuleEffect(C
         case WINDOW_RULE_EFFECT_NO_VRR:
         case WINDOW_RULE_EFFECT_NO_AUTO_HDR:
         case WINDOW_RULE_EFFECT_CONFINE_POINTER:
+        case WINDOW_RULE_EFFECT_NO_XDG_DRAGS:
         case WINDOW_RULE_EFFECT_STAY_FOCUSED: return truthy(raw);
 
         case WINDOW_RULE_EFFECT_FULLSCREENSTATE: {
@@ -412,7 +414,7 @@ bool CWindowRule::matches(PHLWINDOW w, bool allowEnvLookup) {
                     return false;
                 break;
             case RULE_PROP_FULLSCREEN:
-                if (!engine->match(w->m_fullscreenState.internal != 0))
+                if (!engine->match(Fullscreen::controller()->isFullscreen(w)))
                     return false;
                 break;
             case RULE_PROP_PINNED:
@@ -432,11 +434,11 @@ bool CWindowRule::matches(PHLWINDOW w, bool allowEnvLookup) {
                     return false;
                 break;
             case RULE_PROP_FULLSCREENSTATE_INTERNAL:
-                if (!engine->match(w->m_fullscreenState.internal))
+                if (!engine->match(Fullscreen::controller()->getFullscreenModes(w).internal))
                     return false;
                 break;
             case RULE_PROP_FULLSCREENSTATE_CLIENT:
-                if (!engine->match(w->m_fullscreenState.client))
+                if (!engine->match(Fullscreen::controller()->getFullscreenModes(w).client))
                     return false;
                 break;
             case RULE_PROP_ON_WORKSPACE:

@@ -1109,10 +1109,13 @@ void IHyprRenderer::renderAllClientsForWorkspace(PHLMONITOR pMonitor, PHLWORKSPA
     if UNLIKELY (!pMonitor)
         return;
 
-    if UNLIKELY (g_pSessionLockManager->isSessionLocked() && !*PSESSIONLOCKXRAY) {
-        // We stop to render workspaces as soon as the lockscreen was sent the "locked" or "finished" (aka denied) event.
-        // In addition we make sure to stop rendering workspaces after misc:lockdead_screen_delay has passed.
-        if (g_pSessionLockManager->shallConsiderLockMissing() || g_pSessionLockManager->clientLocked() || g_pSessionLockManager->clientDenied())
+    if UNLIKELY (g_pSessionLockManager->isSessionLocked()) {
+        // xray may keep drawing workspaces under a mapped lock surface.
+        // If the lock client has not mapped yet (or was denied), keep the
+        // unlocked session off screen. Otherwise lockdead sits on top of
+        // the live desktop and looks like a regular window.
+        const bool xrayUnderMappedLock = *PSESSIONLOCKXRAY && g_pSessionLockManager->anySessionLockSurfacesPresent();
+        if (!xrayUnderMappedLock)
             return;
     }
 
@@ -1676,12 +1679,14 @@ void IHyprRenderer::renderLockscreen(PHLMONITOR pMonitor, const Time::steady_tp&
         return;
     }
 
-    const bool RENDERPRIMER = g_pSessionLockManager->shallConsiderLockMissing() || g_pSessionLockManager->clientLocked() || g_pSessionLockManager->clientDenied();
-    if (RENDERPRIMER)
+    const auto PSLS          = g_pSessionLockManager->getSessionLockSurfaceForMonitor(pMonitor->m_id);
+    const bool HASLOCKSURFACE = !PSLS.expired();
+    // Cover unlocked content as soon as we are locked without a mapped client.
+    // Do not wait for lockdead_screen_delay, and do not skip this when xray is on.
+    if (!HASLOCKSURFACE || g_pSessionLockManager->clientDenied())
         renderSessionLockPrimer(pMonitor);
 
-    const auto PSLS              = g_pSessionLockManager->getSessionLockSurfaceForMonitor(pMonitor->m_id);
-    const bool RENDERLOCKMISSING = (PSLS.expired() || g_pSessionLockManager->clientDenied()) && g_pSessionLockManager->shallConsiderLockMissing();
+    const bool RENDERLOCKMISSING = (!HASLOCKSURFACE || g_pSessionLockManager->clientDenied()) && g_pSessionLockManager->shallConsiderLockMissing();
 
     ensureLockTexturesRendered(RENDERLOCKMISSING);
 
@@ -1707,7 +1712,7 @@ void IHyprRenderer::renderLockscreen(PHLMONITOR pMonitor, const Time::steady_tp&
 
 void IHyprRenderer::renderSessionLockPrimer(PHLMONITOR pMonitor) {
     static auto PSESSIONLOCKXRAY = CConfigValue<Config::INTEGER>("misc:session_lock_xray");
-    if (*PSESSIONLOCKXRAY)
+    if (*PSESSIONLOCKXRAY && g_pSessionLockManager->anySessionLockSurfacesPresent())
         return;
 
     CRectPassElement::SRectData data;

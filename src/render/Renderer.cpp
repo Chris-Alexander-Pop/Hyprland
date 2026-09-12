@@ -1679,7 +1679,7 @@ void IHyprRenderer::renderLockscreen(PHLMONITOR pMonitor, const Time::steady_tp&
         return;
     }
 
-    const auto PSLS          = g_pSessionLockManager->getSessionLockSurfaceForMonitor(pMonitor->m_id);
+    const auto PSLS           = g_pSessionLockManager->getSessionLockSurfaceForMonitor(pMonitor->m_id);
     const bool HASLOCKSURFACE = !PSLS.expired();
     // Cover unlocked content as soon as we are locked without a mapped client.
     // Do not wait for lockdead_screen_delay, and do not skip this when xray is on.

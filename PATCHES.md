@@ -6,6 +6,7 @@ This branch tracks [hyprwm/Hyprland](https://github.com/hyprwm/Hyprland) `main` 
 |--------|---------|
 | `input: software touchpad rotation when libinput cannot rotate` | Compositor-side `input:rotation` for touchpads without libinput hardware rotation (Synaptics PS/2). |
 | `monitor: update logical size on soft transform changes` | Keeps `m_size` in sync when only monitor transform changes via `applyMonitorRuleSoft`. |
+| `lock: cover session until a lock surface maps` | `session_lock_xray` used to keep drawing the live workspace when hyprlock failed to commit a frame, so lockdead looked like a window on the desktop. |
 
 ## Updating from upstream
 

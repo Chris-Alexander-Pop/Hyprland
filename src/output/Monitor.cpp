@@ -132,12 +132,15 @@ void CMonitor::onConnect(bool noRule) {
             m_frameScheduler->onFrame();
     });
     m_listeners.commit       = m_output->events.commit.listen([this] {
-        if (!m_commitCoordinator->shouldForwardCommitEvent())
+        if (!m_commitCoordinator || !m_commitCoordinator->shouldForwardCommitEvent())
             return;
 
         m_events.commit.emit();
     });
-    m_listeners.commitResult = m_output->events.commitResult.listen([this](const Aquamarine::IOutput::SCommitResult& result) { m_commitCoordinator->onCommitResult(result); });
+    m_listeners.commitResult = m_output->events.commitResult.listen([this](const Aquamarine::IOutput::SCommitResult& result) {
+        if (m_commitCoordinator)
+            m_commitCoordinator->onCommitResult(result);
+    });
     m_listeners.needsFrame   = m_output->events.needsFrame.listen([this] { scheduleFrame(Aquamarine::IOutput::AQ_SCHEDULE_NEEDS_FRAME); });
 
     m_listeners.presented = m_output->events.present.listen([this](const Aquamarine::IOutput::SPresentEvent& event) {
@@ -388,11 +391,18 @@ void CMonitor::onDisconnect(bool destroy) {
     }};
 
     m_frameScheduler.reset();
-    m_commitCoordinator->cancelPending();
+    if (m_commitCoordinator)
+        m_commitCoordinator->cancelPending();
     clearModeRetry();
 
-    if (!m_enabled || g_pCompositor->m_isShuttingDown)
+    if (!m_enabled || g_pCompositor->m_isShuttingDown) {
+        m_listeners.frame.reset();
+        m_listeners.presented.reset();
+        m_listeners.needsFrame.reset();
+        m_listeners.commit.reset();
+        m_listeners.commitResult.reset();
         return;
+    }
 
     LOG(Log::DEBUG, "onDisconnect called for {}", m_name);
 

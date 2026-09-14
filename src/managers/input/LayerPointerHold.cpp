@@ -13,7 +13,7 @@ using namespace Desktop::View;
 
 static WP<CWLSurfaceResource> g_below;
 
-static bool surfaceInTree(SP<CWLSurfaceResource> root, SP<CWLSurfaceResource> surface) {
+static bool                   surfaceInTree(SP<CWLSurfaceResource> root, SP<CWLSurfaceResource> surface) {
     if (!root || !surface)
         return false;
     if (root == surface)

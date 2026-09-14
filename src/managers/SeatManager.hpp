@@ -13,6 +13,7 @@ constexpr size_t MAX_SERIAL_STORE_LEN = 100;
 class CWLSurfaceResource;
 class CWLSeatResource;
 class IPointer;
+struct wl_client;
 
 class IKeyboardEventHandler {
   public:
@@ -185,6 +186,11 @@ class CSeatManager {
     SP<SSeatResourceContainer>              containerForResource(SP<CWLSeatResource> seatResource);
 
     void                                    refocusGrab();
+
+    void                                    sendPointerLeaveOnClient(wl_client* client);
+    void                                    sendPointerMotionOnClient(wl_client* client, uint32_t timeMs, const Vector2D& local);
+    void                                    sendPointerFrameOnClient(wl_client* client);
+    void                                    bindPointerFocusResource(SP<CWLSurfaceResource> surf);
 
     struct {
         CHyprSignalListener newSeatResource;

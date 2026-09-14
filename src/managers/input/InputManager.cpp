@@ -57,6 +57,7 @@
 
 #include "../../render/Renderer.hpp"
 #include "trackpad/TrackpadGestures.hpp"
+#include "LayerPointerHold.hpp"
 #include "../../pointer/cursor/CursorShapeOverrideController.hpp"
 
 #include <aquamarine/input/Input.hpp>
@@ -1789,9 +1790,12 @@ void CInputManager::onKeyboardKey(const IKeyboard::SKeyEvent& event, SP<IKeyboar
         state   = pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED;
     }
 
+    const bool dropLogo = LayerPointerHold::layerMapped() && LayerPointerHold::isLogoKey(pKeyboard, event.keycode);
+
     if (USEIME) {
         IME->setKeyboard(pKeyboard);
-        IME->sendKey(event.timeMs, event.keycode, state);
+        if (!dropLogo)
+            IME->sendKey(event.timeMs, event.keycode, state);
     } else {
         const auto CONTAINS = std::ranges::contains(m_pressed, event.keycode);
 
@@ -1805,8 +1809,10 @@ void CInputManager::onKeyboardKey(const IKeyboard::SKeyEvent& event, SP<IKeyboar
         else
             m_pressed.emplace_back(event.keycode);
 
-        g_pSeatManager->setKeyboard(pKeyboard);
-        g_pSeatManager->sendKeyboardKey(event.timeMs, event.keycode, state);
+        if (!dropLogo) {
+            g_pSeatManager->setKeyboard(pKeyboard);
+            g_pSeatManager->sendKeyboardKey(event.timeMs, event.keycode, state);
+        }
     }
 
     updateKeyboardsLeds(pKeyboard);
@@ -1840,6 +1846,11 @@ void CInputManager::onKeyboardMod(SP<IKeyboard> pKeyboard) {
         const auto ALLMODS = shareModsFromAllKBs(DEPRESSED_MODS_HL);
         MODS.depressed |= hyprlandModsToXkb(pKeyboard, ALLMODS);
         m_lastMods = ALLMODS;
+    }
+
+    if (LayerPointerHold::layerMapped()) {
+        MODS.depressed = LayerPointerHold::stripLogoMods(pKeyboard, MODS.depressed);
+        MODS.latched   = LayerPointerHold::stripLogoMods(pKeyboard, MODS.latched);
     }
 
     if (USEIME) {

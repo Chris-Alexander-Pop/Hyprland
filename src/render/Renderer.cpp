@@ -13,6 +13,7 @@
 #include "../pointer/cursor/CursorManager.hpp"
 #include "../pointer/PointerManager.hpp"
 #include "../managers/input/InputManager.hpp"
+#include "../managers/input/LayerPointerHold.hpp"
 #include "../animation/AnimationManager.hpp"
 #include "../managers/fullscreen/FullscreenController.hpp"
 #include "../managers/screenshare/ScreenshareManager.hpp"
@@ -2481,7 +2482,14 @@ void IHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
 
     renderCursor = renderCursor && shouldRenderCursor();
 
-    if (renderCursor) {
+    if (auto pin = LayerPointerHold::freezePin(); LayerPointerHold::freeze() && pin) {
+        TRACY_GPU_ZONE("RenderFreezePinCursor");
+        Pointer::mgr()->renderFreezePinFor(pMonitor->m_self.lock(), *pin);
+        Pointer::mgr()->includeFreezePinDamage(pMonitor->m_self.lock(), m_renderData.damage, *pin);
+        Pointer::mgr()->includeFreezePinDamage(pMonitor->m_self.lock(), m_renderData.finalDamage, *pin);
+    }
+
+    if (renderCursor && !(LayerPointerHold::freeze() && pMonitor->needsACopyFB())) {
         TRACY_GPU_ZONE("RenderCursor");
         Pointer::mgr()->renderSoftwareCursorsFor(ctx, pMonitor->m_self.lock(), NOW, ctx.m_data.damage);
     }

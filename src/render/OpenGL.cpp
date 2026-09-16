@@ -28,6 +28,7 @@
 #include "../protocols/ColorManagement.hpp"
 #include "../helpers/cm/ColorManagement.hpp"
 #include "../managers/input/InputManager.hpp"
+#include "../managers/input/LayerPointerHold.hpp"
 #include "../managers/eventLoop/EventLoopManager.hpp"
 #include "../pointer/cursor/CursorManager.hpp"
 #include "../helpers/fs/FsUtils.hpp"
@@ -836,6 +837,9 @@ void CHyprOpenGLImpl::end(CRenderContext& ctx) {
                     ctx.m_data.pMonitor->resources()->markMirrorFBUpdated();
                 else
                     ctx.m_data.pMonitor->resources()->invalidateMirrorFB();
+
+                if (LayerPointerHold::freeze() && g_pHyprRenderer->shouldRenderCursor() && !Pointer::mgr()->hasVisibleHWCursor(ctx.m_data.pMonitor.lock()))
+                    Pointer::mgr()->renderSoftwareCursorImmediate(ctx.m_data.pMonitor.lock());
             }
 
             blend(false);

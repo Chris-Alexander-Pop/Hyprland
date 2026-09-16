@@ -25,13 +25,13 @@ using namespace Desktop::View;
 
 static WP<CWLSurfaceResource> g_below;
 static Vector2D               g_noted{};
-static bool                   g_hasNoted    = false;
+static bool                   g_hasNoted   = false;
 static bool                   g_simulating = false;
 static Vector2D               g_freezePin{};
 static bool                   g_haveFreezePin = false;
 static bool                   g_freezeWas     = false;
 
-static bool surfaceInTree(SP<CWLSurfaceResource> root, SP<CWLSurfaceResource> surface) {
+static bool                   surfaceInTree(SP<CWLSurfaceResource> root, SP<CWLSurfaceResource> surface) {
     if (!root || !surface)
         return false;
     if (root == surface)

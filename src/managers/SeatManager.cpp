@@ -13,6 +13,7 @@
 #include "../desktop/view/LayerSurface.hpp"
 #include "../managers/input/InputManager.hpp"
 #include "../managers/input/LayerPointerHold.hpp"
+#include "../render/Renderer.hpp"
 #include "../state/MonitorState.hpp"
 #include "devices/IHID.hpp"
 #include "wlr-layer-shell-unstable-v1.hpp"
@@ -397,6 +398,71 @@ void CSeatManager::bindPointerFocusResource(SP<CWLSurfaceResource> surf) {
     }
 }
 
+static WP<CWLSurfaceResource> g_holdOverlay;
+
+void CSeatManager::resetHoldOverlay() {
+    if (auto old = g_holdOverlay.lock()) {
+        sendPointerLeaveOnClient(old->client());
+        sendPointerFrameOnClient(old->client());
+    }
+    g_holdOverlay.reset();
+}
+
+void CSeatManager::commitPointerFocus(SP<CWLSurfaceResource> surf, const Vector2D& local, bool enter) {
+    auto lastPointerFocusResource = m_state.pointerFocusResource;
+    m_state.dndPointerFocus.reset();
+    m_state.pointerFocus = surf;
+    bindPointerFocusResource(surf);
+    m_state.dndPointerFocus = surf;
+    if (enter && surf)
+        enterAllClientPointers(surf, local);
+    if (m_state.pointerFocusResource != lastPointerFocusResource)
+        sendPointerFrame(lastPointerFocusResource);
+    sendPointerFrame();
+    if (surf)
+        m_listeners.pointerSurfaceDestroy = surf->m_events.destroy.listen([this] { setPointerFocus(nullptr, {}); });
+    m_events.pointerFocusChange.emit();
+    m_events.dndPointerFocusChange.emit();
+}
+
+void CSeatManager::enterHoldBelow(SP<CWLSurfaceResource> surf, const Vector2D& local) {
+    if (!surf)
+        return;
+    LayerPointerHold::rememberBelow(surf);
+    m_listeners.pointerSurfaceDestroy.reset();
+    commitPointerFocus(surf, local, true);
+}
+
+void CSeatManager::focusHoldOverlay(SP<CWLSurfaceResource> ov, const Vector2D& local) {
+    if (!ov || !ov->getResource() || !ov->getResource()->resource())
+        return;
+
+    m_lastLocalCoords = local;
+    if (g_holdOverlay == ov)
+        return;
+
+    if (auto old = g_holdOverlay.lock(); old && old->client() != ov->client()) {
+        sendPointerLeaveOnClient(old->client());
+        sendPointerFrameOnClient(old->client());
+    }
+
+    g_holdOverlay = ov;
+    enterAllClientPointers(ov, local);
+    sendPointerFrameOnClient(ov->client());
+}
+
+void CSeatManager::enterAllClientPointers(SP<CWLSurfaceResource> surf, const Vector2D& local) {
+    if (!surf || !surf->getResource() || !surf->getResource()->resource())
+        return;
+
+    auto client = surf->client();
+    for (auto const& p : PROTO::seat->m_pointers) {
+        if (!p || !p->m_owner || p->m_owner->client() != client)
+            continue;
+        p->sendEnter(surf, local);
+    }
+}
+
 void CSeatManager::setPointerFocus(SP<CWLSurfaceResource> surf, const Vector2D& local) {
     const bool dndActive = PROTO::data && PROTO::data->dndActive();
 
@@ -417,6 +483,13 @@ void CSeatManager::setPointerFocus(SP<CWLSurfaceResource> surf, const Vector2D& 
         return;
     }
 
+    if (LayerPointerHold::freeze()) {
+        m_lastLocalCoords = local;
+        return;
+    }
+
+    m_lastLocalCoords = local;
+
     const auto oldSurf   = m_state.pointerFocus.lock();
     const bool holdOn    = LayerPointerHold::enabled();
     const bool toLayer   = holdOn && LayerPointerHold::isHeldSurface(surf);
@@ -433,55 +506,30 @@ void CSeatManager::setPointerFocus(SP<CWLSurfaceResource> surf, const Vector2D& 
 
     const bool toBelow = holdOn && surf && below && surf == below;
 
-    m_listeners.pointerSurfaceDestroy.reset();
-
-    if (toLayer && oldSurf && !fromLayer) {
-        LayerPointerHold::rememberBelow(oldSurf);
-
-        auto lastPointerFocusResource = m_state.pointerFocusResource;
-        m_state.dndPointerFocus.reset();
-        m_state.pointerFocus = surf;
-        bindPointerFocusResource(surf);
-        m_state.dndPointerFocus = surf;
-
-        if (surf && m_state.pointerFocusResource) {
-            for (auto const& p : m_state.pointerFocusResource->m_pointers) {
-                if (!p)
-                    continue;
-                p->sendEnter(surf, local);
+    if (holdOn && LayerPointerHold::layerMapped() && (toLayer || toBelow)) {
+        SP<CWLSurfaceResource> keep = below;
+        if (oldSurf && !fromLayer)
+            keep = oldSurf;
+        if (!keep) {
+            Vector2D loc;
+            keep = LayerPointerHold::surfaceBelowAt(g_pInputManager->getMouseCoordsInternal(), loc);
+        }
+        if (keep && !LayerPointerHold::isHeldSurface(keep)) {
+            LayerPointerHold::rememberBelow(keep);
+            if (m_state.pointerFocus != keep) {
+                Vector2D klocal = local;
+                if (auto bl = LayerPointerHold::belowLocal(g_pInputManager->getMouseCoordsInternal()))
+                    klocal = *bl;
+                m_listeners.pointerSurfaceDestroy.reset();
+                commitPointerFocus(keep, klocal, true);
             }
         }
-
-        if (m_state.pointerFocusResource != lastPointerFocusResource)
-            sendPointerFrame(lastPointerFocusResource);
-        sendPointerFrame();
-
-        if (surf)
-            m_listeners.pointerSurfaceDestroy = surf->m_events.destroy.listen([this] { setPointerFocus(nullptr, {}); });
-
-        m_events.pointerFocusChange.emit();
-        m_events.dndPointerFocusChange.emit();
+        if (toLayer)
+            focusHoldOverlay(surf, local);
         return;
     }
 
-    if (toBelow && (fromLayer || LayerPointerHold::isHeldSurface(oldSurf) || oldSurf != surf)) {
-        if (oldSurf)
-            sendPointerLeaveOnClient(oldSurf->client());
-
-        m_state.dndPointerFocus.reset();
-        m_state.pointerFocus = surf;
-        bindPointerFocusResource(surf);
-        m_state.dndPointerFocus = surf;
-
-        sendPointerFrame();
-
-        if (surf)
-            m_listeners.pointerSurfaceDestroy = surf->m_events.destroy.listen([this] { setPointerFocus(nullptr, {}); });
-
-        m_events.pointerFocusChange.emit();
-        m_events.dndPointerFocusChange.emit();
-        return;
-    }
+    m_listeners.pointerSurfaceDestroy.reset();
 
     if (below && surf != below && !toLayer) {
         sendPointerLeaveOnClient(below->client());
@@ -490,6 +538,13 @@ void CSeatManager::setPointerFocus(SP<CWLSurfaceResource> surf, const Vector2D& 
 
     if (!toLayer && !fromLayer)
         LayerPointerHold::clearBelow();
+
+    if (holdOn && LayerPointerHold::layerMapped()) {
+        if (fromLayer && oldSurf)
+            sendPointerLeaveOnClient(oldSurf->client());
+        commitPointerFocus(surf, local, true);
+        return;
+    }
 
     for (auto const& p : PROTO::seat->m_pointers) {
         if (!p)
@@ -538,7 +593,55 @@ void CSeatManager::setPointerFocus(SP<CWLSurfaceResource> surf, const Vector2D& 
 }
 
 void CSeatManager::sendPointerMotion(uint32_t timeMs, const Vector2D& local) {
+    const auto global = g_pInputManager->getMouseCoordsInternal();
+
+    if (LayerPointerHold::freeze()) {
+        Vector2D olocal;
+        if (auto ov = LayerPointerHold::overlayAt(global, olocal)) {
+            focusHoldOverlay(ov, olocal);
+            sendPointerMotionOnClient(ov->client(), timeMs, olocal);
+            sendPointerFrameOnClient(ov->client());
+            LayerPointerHold::notePos(global);
+            return;
+        }
+        if (g_holdOverlay) {
+            resetHoldOverlay();
+            if (g_pHyprRenderer)
+                g_pHyprRenderer->setCursorFromName("left_ptr", true);
+        }
+        return;
+    }
+
+    const bool holdMapped = LayerPointerHold::enabled() && LayerPointerHold::layerMapped();
+    const bool skip       = LayerPointerHold::simulated() || LayerPointerHold::noted(global);
+
+    if (holdMapped) {
+        Vector2D olocal;
+        if (auto ov = LayerPointerHold::overlayAt(global, olocal)) {
+            focusHoldOverlay(ov, olocal);
+            sendPointerMotionOnClient(ov->client(), timeMs, olocal);
+            sendPointerFrameOnClient(ov->client());
+        } else if (g_holdOverlay) {
+            resetHoldOverlay();
+        }
+
+        if (auto b = LayerPointerHold::below()) {
+            if (skip)
+                return;
+            if (auto bl = LayerPointerHold::belowLocal(global)) {
+                sendPointerMotionOnClient(b->client(), timeMs, *bl);
+                sendPointerFrameOnClient(b->client());
+            }
+        }
+        return;
+    }
+
     if (!m_state.pointerFocusResource)
+        return;
+
+    m_lastLocalCoords = local;
+
+    if (skip)
         return;
 
     for (auto const& s : m_seatResources) {
@@ -552,24 +655,63 @@ void CSeatManager::sendPointerMotion(uint32_t timeMs, const Vector2D& local) {
             p->sendMotion(timeMs, local);
         }
     }
-
-    m_lastLocalCoords = local;
-
-    const auto focus = m_state.pointerFocus.lock();
-    if (!LayerPointerHold::isHeldSurface(focus))
-        return;
-
-    const auto echo = LayerPointerHold::belowLocal(g_pInputManager->getMouseCoordsInternal());
-    const auto held = LayerPointerHold::below();
-    if (!echo || !held)
-        return;
-
-    sendPointerMotionOnClient(held->client(), timeMs, *echo);
-    sendPointerFrameOnClient(held->client());
 }
 
 void CSeatManager::sendPointerButton(uint32_t timeMs, uint32_t key, wl_pointer_button_state state_) {
-    if (!m_state.pointerFocusResource || (PROTO::data && PROTO::data->dndActive()))
+    if (PROTO::data && PROTO::data->dndActive())
+        return;
+
+    const auto global = g_pInputManager->getMouseCoordsInternal();
+    if (LayerPointerHold::freeze()) {
+        Vector2D olocal;
+        auto     ov = LayerPointerHold::overlayAt(global, olocal);
+        if (!ov)
+            ov = g_holdOverlay.lock();
+        if (ov) {
+            if (LayerPointerHold::overlayAt(global, olocal))
+                focusHoldOverlay(ov, olocal);
+            enterAllClientPointers(ov, m_lastLocalCoords);
+            sendPointerFrameOnClient(ov->client());
+            for (auto const& p : PROTO::seat->m_pointers) {
+                if (!p || !p->m_owner || p->m_owner->client() != ov->client())
+                    continue;
+                p->sendButton(timeMs, key, state_);
+            }
+            return;
+        }
+        return;
+    }
+
+    if (LayerPointerHold::enabled() && LayerPointerHold::layerMapped()) {
+        Vector2D olocal;
+        if (auto ov = LayerPointerHold::overlayAt(global, olocal)) {
+            focusHoldOverlay(ov, olocal);
+            enterAllClientPointers(ov, olocal);
+            sendPointerFrameOnClient(ov->client());
+            for (auto const& p : PROTO::seat->m_pointers) {
+                if (!p || !p->m_owner || p->m_owner->client() != ov->client())
+                    continue;
+                p->sendButton(timeMs, key, state_);
+            }
+            return;
+        }
+    }
+
+    const auto focus = m_state.pointerFocus.lock();
+
+    if (LayerPointerHold::isHeldSurface(focus)) {
+        enterAllClientPointers(focus, m_lastLocalCoords);
+        sendPointerFrameOnClient(focus->client());
+
+        for (auto const& p : PROTO::seat->m_pointers) {
+            if (!p || !p->m_owner || p->m_owner->client() != focus->client())
+                continue;
+            p->sendButton(timeMs, key, state_);
+        }
+        return;
+    }
+
+    if (!m_state.pointerFocusResource)
         return;
 
     for (auto const& s : m_seatResources) {
@@ -611,6 +753,34 @@ void CSeatManager::sendPointerFrame(WP<CWLSeatResource> pResource) {
 
 void CSeatManager::sendPointerAxis(uint32_t timeMs, wl_pointer_axis axis, double value, int32_t discrete, int32_t value120, wl_pointer_axis_source source,
                                    wl_pointer_axis_relative_direction relative) {
+    if (LayerPointerHold::freeze()) {
+        const auto global = g_pInputManager->getMouseCoordsInternal();
+        Vector2D   olocal;
+        auto       ov = LayerPointerHold::overlayAt(global, olocal);
+        if (!ov)
+            ov = g_holdOverlay.lock();
+        if (!ov)
+            return;
+        if (LayerPointerHold::overlayAt(global, olocal))
+            focusHoldOverlay(ov, olocal);
+        for (auto const& p : PROTO::seat->m_pointers) {
+            if (!p || !p->m_owner || p->m_owner->client() != ov->client())
+                continue;
+            p->sendAxis(timeMs, axis, value);
+            p->sendAxisSource(source);
+            p->sendAxisRelativeDirection(axis, relative);
+            if (source == 0) {
+                if (p->version() >= 8)
+                    p->sendAxisValue120(axis, value120);
+                else
+                    p->sendAxisDiscrete(axis, discrete);
+            } else if (value == 0)
+                p->sendAxisStop(timeMs, axis);
+        }
+        sendPointerFrameOnClient(ov->client());
+        return;
+    }
+
     if (!m_state.pointerFocusResource)
         return;
 
@@ -809,7 +979,8 @@ void CSeatManager::refocusGrab() {
 }
 
 void CSeatManager::onSetCursor(SP<CWLSeatResource> seatResource, uint32_t serial, SP<CWLSurfaceResource> surf, const Vector2D& hotspot) {
-    if (!m_state.pointerFocusResource || !seatResource || seatResource->client() != m_state.pointerFocusResource->client()) {
+    const bool freezeOverlay = LayerPointerHold::freeze() && seatResource && LayerPointerHold::isHeldClient(seatResource->client());
+    if (!freezeOverlay && (!m_state.pointerFocusResource || !seatResource || seatResource->client() != m_state.pointerFocusResource->client())) {
         LOG(Log::DEBUG, "[seatmgr] Rejecting a setCursor because the client ain't in focus");
         return;
     }

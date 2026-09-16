@@ -15,6 +15,7 @@
 #include "../../render/pass/RectPassElement.hpp"
 #include "helpers/cm/ColorManagement.hpp"
 #include "../../managers/fullscreen/FullscreenController.hpp"
+#include "../../managers/input/LayerPointerHold.hpp"
 #include <hyprutils/math/Region.hpp>
 #include <hyprgraphics/egl/Egl.hpp>
 
@@ -310,7 +311,7 @@ void CScreenshareFrame::renderMonitor() {
         w->popupHead()->breadthfirst(hidePopups(popupBaseOffset), nullptr);
     }
 
-    if (m_overlayCursor) {
+    if (m_overlayCursor && !LayerPointerHold::freeze()) {
         CRegion  fakeDamage = {0, 0, m_bufferSize.x, m_bufferSize.y};
         Vector2D cursorPos  = Pointer::mgr()->untransformedPosition() - PMONITOR->m_position - m_session->m_captureBox.pos() / PMONITOR->m_scale;
         Pointer::mgr()->renderSoftwareCursorsFor(PMONITOR, Time::steadyNow(), fakeDamage, cursorPos, true);
@@ -338,6 +339,11 @@ void CScreenshareFrame::renderWindow() {
 
     if (!m_overlayCursor)
         return;
+
+    if (auto pin = LayerPointerHold::freezePin(); LayerPointerHold::freeze() && pin) {
+        Pointer::mgr()->renderFreezePinAt(PMONITOR->m_self.lock(), *pin - PWINDOW->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT));
+        return;
+    }
 
     auto pointerSurfaceResource = g_pSeatManager->m_state.pointerFocus.lock();
 
@@ -441,7 +447,9 @@ bool CScreenshareFrame::copyShm() {
 
     const auto PMONITOR = m_session->monitor();
 
-    auto       outFB = g_pHyprRenderer->createFB();
+    if (!m_session->m_shmFB)
+        m_session->m_shmFB = g_pHyprRenderer->createFB("screenshare shm");
+    auto outFB = m_session->m_shmFB;
     outFB->alloc(m_bufferSize.x, m_bufferSize.y, shm.format);
     outFB->setImageDescription(NColorManagement::DEFAULT_SRGB_IMAGE_DESCRIPTION);
 
@@ -485,7 +493,7 @@ bool CScreenshareFrame::copyShm() {
 
 void CScreenshareFrame::storeTempFB() {
     if (!m_session->m_tempFB)
-        m_session->m_tempFB = g_pHyprRenderer->createFB();
+        m_session->m_tempFB = g_pHyprRenderer->createFB("screenshare temp");
     m_session->m_tempFB->alloc(m_bufferSize.x, m_bufferSize.y);
     m_session->m_tempFB->setImageDescription(NColorManagement::DEFAULT_SRGB_IMAGE_DESCRIPTION);
 

@@ -167,6 +167,49 @@ void CCursorManager::setAnimationTimer(const int& frame, const int& delay) {
     m_currentAnimationFrame = frame;
 }
 
+SP<CCursorBuffer> CCursorManager::bufferForName(const std::string& name, Vector2D& hotspotLogical, Vector2D& sizeLogical) {
+    static auto PUSEHYPRCURSOR = CConfigValue<Config::INTEGER>("cursor:enable_hyprcursor");
+
+    auto        fromHypr = [&](const std::string& shape) -> SP<CCursorBuffer> {
+        if (!m_hyprcursor || !m_hyprcursor->valid())
+            return nullptr;
+        auto data = m_hyprcursor->getShape(shape.c_str(), m_currentStyleInfo);
+        if (data.images.empty()) {
+            std::string alt = shape;
+            std::ranges::replace(alt, '-', '_');
+            data = m_hyprcursor->getShape(alt.c_str(), m_currentStyleInfo);
+        }
+        if (data.images.empty())
+            return nullptr;
+        const auto& img = data.images[0];
+        hotspotLogical  = Vector2D{img.hotspotX, img.hotspotY} / m_cursorScale;
+        sizeLogical     = Vector2D{img.size, img.size} / m_cursorScale;
+        return makeShared<CCursorBuffer>(img.surface, Vector2D{img.size, img.size}, Vector2D{img.hotspotX, img.hotspotY});
+    };
+
+    if (*PUSEHYPRCURSOR) {
+        if (auto buf = fromHypr(name))
+            return buf;
+        for (const char* fallback : {"left_ptr", "default", "left-ptr"}) {
+            if (auto buf = fromHypr(fallback))
+                return buf;
+        }
+    }
+
+    if (!m_xcursor)
+        return nullptr;
+    auto xcursor = m_xcursor->getShape(name, m_size, m_cursorScale);
+    if (!xcursor || xcursor->images.empty())
+        xcursor = m_xcursor->getShape("left_ptr", m_size, m_cursorScale);
+    if (!xcursor || xcursor->images.empty())
+        return nullptr;
+    auto&       icon  = xcursor->images.front();
+    const float scale = std::ceil(m_cursorScale);
+    hotspotLogical    = icon.hotspot / scale;
+    sizeLogical       = icon.size / scale;
+    return makeShared<CCursorBuffer>(rc<uint8_t*>(icon.pixels.data()), icon.size, icon.hotspot);
+}
+
 void CCursorManager::setCursorFromName(const std::string& name) {
 
     static auto PUSEHYPRCURSOR = CConfigValue<Config::INTEGER>("cursor:enable_hyprcursor");

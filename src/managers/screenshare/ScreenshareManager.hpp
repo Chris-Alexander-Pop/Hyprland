@@ -77,6 +77,7 @@ namespace Screenshare {
         Vector2D                 m_bufferSize = Vector2D(0, 0);
 
         SP<Render::IFramebuffer> m_tempFB;
+        SP<Render::IFramebuffer> m_shmFB;
 
         SP<CEventLoopTimer>      m_shareStopTimer;
         bool                     m_sharing = false;
@@ -147,6 +148,8 @@ namespace Screenshare {
         bool copy();
         void render();
         void calculateConstraints();
+
+        SP<Render::IFramebuffer> m_copyFB;
 
         friend class CScreenshareFrame;
         friend class CScreenshareManager;

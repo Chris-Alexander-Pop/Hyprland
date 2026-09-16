@@ -1,5 +1,6 @@
 #include "ScreenshareManager.hpp"
 #include "../../pointer/PointerManager.hpp"
+#include "../input/LayerPointerHold.hpp"
 #include "../../protocols/core/Seat.hpp"
 #include "../permissions/DynamicPermissionManager.hpp"
 #include "../../render/Renderer.hpp"
@@ -13,6 +14,8 @@ using namespace Screenshare;
 CCursorshareSession::CCursorshareSession(wl_client* client, WP<CWLPointerResource> pointer) : m_client(client), m_pointer(pointer) {
     m_listeners.pointerDestroyed = m_pointer->m_events.destroyed.listen([this] { stop(); });
     m_listeners.cursorChanged    = Pointer::mgr()->m_events.cursorChanged.listen([this] {
+        if (LayerPointerHold::freeze())
+            return;
         calculateConstraints();
         m_events.constraintsChanged.emit();
 
@@ -43,23 +46,33 @@ void CCursorshareSession::stop() {
 }
 
 void CCursorshareSession::calculateConstraints() {
-    const auto& cursorImage = Pointer::mgr()->currentCursorImage();
-    m_constraintsChanged    = true;
+    m_constraintsChanged = true;
 
-    // cursor is hidden, keep the previous constraints and render 0 alpha
-    if (!cursorImage.pBuffer)
-        return;
+    SP<Aquamarine::IBuffer> buf;
+    Vector2D                hotspot;
+    Vector2D                size;
 
-    // TODO: should cursor share have a format bit flip for RGBA?
-    if (auto attrs = cursorImage.pBuffer->shm(); attrs.success) {
-        m_format = attrs.format;
+    if (LayerPointerHold::freeze() && Pointer::mgr()->hasFreezeCursor()) {
+        buf     = Pointer::mgr()->freezeCursorBuffer();
+        hotspot = Pointer::mgr()->freezeCursorHotspot();
+        size    = Pointer::mgr()->freezeCursorSize();
     } else {
-        // we only have shm cursors
-        return;
+        const auto& cursorImage = Pointer::mgr()->currentCursorImage();
+        buf                     = cursorImage.pBuffer;
+        hotspot                 = cursorImage.hotspot;
+        size                    = cursorImage.size;
     }
 
-    m_hotspot    = cursorImage.hotspot;
-    m_bufferSize = cursorImage.size;
+    if (!buf)
+        return;
+
+    if (auto attrs = buf->shm(); attrs.success)
+        m_format = attrs.format;
+    else
+        return;
+
+    m_hotspot    = hotspot;
+    m_bufferSize = size;
 }
 
 // TODO: allow render to buffer without monitor and remove monitor param
@@ -116,24 +129,32 @@ void CCursorshareSession::render() {
     const auto  PERM = g_pDynamicPermissionManager->clientPermissionMode(m_client, PERMISSION_TYPE_CURSOR_POS);
 
     const auto& cursorImage = Pointer::mgr()->currentCursorImage();
+    auto        freezeTex   = LayerPointerHold::freeze() ? Pointer::mgr()->freezeCursorTexture() : nullptr;
 
     // TODO: implement a monitor independent render mode to buffer that does this in CHyprRenderer::begin() or something like that
     g_pHyprRenderer->m_renderData.transformDamage = false;
     g_pHyprRenderer->setViewport(0, 0, m_bufferSize.x, m_bufferSize.y);
 
-    bool overlaps = Pointer::mgr()->getCursorBoxGlobal().overlaps(m_pendingFrame.sourceBoxCallback());
+    CBox       sourceBox = m_pendingFrame.sourceBoxCallback();
+    CBox       cursorBox = Pointer::mgr()->getCursorBoxGlobal();
+    if (auto pin = LayerPointerHold::freezePin()) {
+        const auto hot = Pointer::mgr()->hasFreezeCursor() ? Pointer::mgr()->freezeCursorHotspot() : Pointer::mgr()->hotspot();
+        cursorBox.x    = pin->x - hot.x;
+        cursorBox.y    = pin->y - hot.y;
+        if (Pointer::mgr()->hasFreezeCursor())
+            cursorBox.w = Pointer::mgr()->freezeCursorSize().x, cursorBox.h = Pointer::mgr()->freezeCursorSize().y;
+    }
+    bool overlaps = cursorBox.overlaps(sourceBox);
     g_pHyprRenderer->startRenderPass();
+    auto tex = freezeTex ? freezeTex : cursorImage.bufferTex;
     if (PERM != PERMISSION_RULE_ALLOW_MODE_ALLOW || !overlaps) {
-        // render black when not allowed
         g_pHyprRenderer->draw(CClearPassElement::SClearData{Colors::BLACK});
-    } else if (!cursorImage.pBuffer || !cursorImage.surface || !cursorImage.bufferTex) {
-        // render clear when cursor is probably hidden
+    } else if (!tex) {
         g_pHyprRenderer->draw(CClearPassElement::SClearData{{0, 0, 0, 0}});
     } else {
-        // render cursor
         g_pHyprRenderer->draw(CTexPassElement::SRenderData{
-            .tex = cursorImage.bufferTex,
-            .box = {{}, cursorImage.bufferTex->m_size},
+            .tex = tex,
+            .box = {{}, tex->m_size},
         });
     }
 
@@ -173,7 +194,9 @@ bool CCursorshareSession::copy() {
             return false;
         }
 
-        auto outFB = g_pHyprRenderer->createFB();
+        if (!m_copyFB)
+            m_copyFB = g_pHyprRenderer->createFB("cursorshare shm");
+        auto outFB = m_copyFB;
         outFB->alloc(m_bufferSize.x, m_bufferSize.y, m_format);
 
         if (!g_pHyprRenderer->beginFullFakeRender(m_pendingFrame.monitor, fakeDamage, outFB)) {

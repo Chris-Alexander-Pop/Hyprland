@@ -8,14 +8,19 @@
 
 class CWLSurfaceResource;
 class IKeyboard;
+struct wl_client;
 
-// Keep pointer enter on the last client while the cursor is over a named layer.
 namespace LayerPointerHold {
     bool        enabled();
+    bool        freeze();
+    void        syncFreezePin();
+    std::optional<Vector2D> freezePin();
     std::string targetNamespace();
     bool        layerMapped();
     bool        isHeldLayer(PHLLS layer);
     bool        isHeldSurface(SP<CWLSurfaceResource> surf);
+    bool        isHeldClient(wl_client* client);
+    SP<CWLSurfaceResource> overlayAt(const Vector2D& global, Vector2D& local);
 
     bool        isLogoKey(SP<IKeyboard> keyboard, uint32_t evdevKeycode);
     uint32_t    stripLogoMods(SP<IKeyboard> keyboard, uint32_t xkbMods);
@@ -23,6 +28,16 @@ namespace LayerPointerHold {
     void                   rememberBelow(SP<CWLSurfaceResource> surf);
     SP<CWLSurfaceResource> below();
     void                   clearBelow();
+    SP<CWLSurfaceResource> surfaceBelowAt(const Vector2D& global, Vector2D& local);
 
     std::optional<Vector2D> belowLocal(const Vector2D& global);
+
+    void                   clearNoted();
+
+    void beginSimulated();
+    void endSimulated();
+    bool simulated();
+
+    void notePos(const Vector2D& global);
+    bool noted(const Vector2D& global);
 }

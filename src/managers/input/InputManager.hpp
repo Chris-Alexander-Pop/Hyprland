@@ -217,6 +217,7 @@ class CInputManager {
     std::string getNameForNewDevice(std::string);
 
     void        releaseAllMouseButtons();
+    void        setAppCursorName(const std::string& name);
 
     // for some bugs in follow mouse 0
     bool m_lastFocusOnLS = false;

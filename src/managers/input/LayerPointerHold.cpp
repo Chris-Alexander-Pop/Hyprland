@@ -2,16 +2,34 @@
 
 #include "../../config/ConfigValue.hpp"
 #include "../../desktop/state/LayerState.hpp"
+#include "../../desktop/state/ViewState.hpp"
 #include "../../desktop/view/LayerSurface.hpp"
 #include "../../desktop/view/WLSurface.hpp"
+#include "../../desktop/view/window/Window.hpp"
 #include "../../devices/IKeyboard.hpp"
+#include "../../managers/SeatManager.hpp"
+#include "../../output/Monitor.hpp"
+#include "../../pointer/PointerController.hpp"
+#include "../../pointer/PointerManager.hpp"
+#include "../../pointer/cursor/CursorManager.hpp"
 #include "../../protocols/core/Compositor.hpp"
+#include "../../protocols/LayerShell.hpp"
+#include "../../render/Renderer.hpp"
+#include "../../state/MonitorState.hpp"
+#include "InputManager.hpp"
 
+#include <wayland-server.h>
 #include <xkbcommon/xkbcommon.h>
 
 using namespace Desktop::View;
 
 static WP<CWLSurfaceResource> g_below;
+static Vector2D               g_noted{};
+static bool                   g_hasNoted    = false;
+static bool                   g_simulating = false;
+static Vector2D               g_freezePin{};
+static bool                   g_haveFreezePin = false;
+static bool                   g_freezeWas     = false;
 
 static bool surfaceInTree(SP<CWLSurfaceResource> root, SP<CWLSurfaceResource> surface) {
     if (!root || !surface)
@@ -33,6 +51,64 @@ std::string LayerPointerHold::targetNamespace() {
 bool LayerPointerHold::enabled() {
     static auto PHOLD = CConfigValue<Hyprlang::INT>("misc:layer_hold_pointer");
     return *PHOLD && !nsEmpty(targetNamespace());
+}
+
+bool LayerPointerHold::freeze() {
+    static auto PFREEZE = CConfigValue<Hyprlang::INT>("misc:layer_hold_freeze");
+    return enabled() && *PFREEZE;
+}
+
+void LayerPointerHold::syncFreezePin() {
+    const bool now = freeze();
+    if (now == g_freezeWas)
+        return;
+
+    g_freezeWas = now;
+    if (now) {
+        if (!g_pInputManager)
+            return;
+        g_freezePin     = g_pInputManager->getMouseCoordsInternal();
+        g_haveFreezePin = true;
+        Vector2D local;
+        if (auto surf = surfaceBelowAt(g_freezePin, local))
+            rememberBelow(surf);
+        Pointer::mgr()->beginFreezeCursor();
+        if (g_pHyprRenderer)
+            g_pHyprRenderer->damageBox(CBox{g_freezePin - Vector2D{32, 32}, Vector2D{96, 96}});
+        return;
+    }
+
+    if (!g_haveFreezePin)
+        return;
+
+    if (g_pSeatManager)
+        g_pSeatManager->resetHoldOverlay();
+    const auto savedName = Pointer::mgr() ? Pointer::mgr()->freezeCursorName() : std::string{};
+    if (g_pInputManager)
+        g_pInputManager->setAppCursorName(savedName);
+    if (Pointer::mgr())
+        Pointer::mgr()->applyFreezeCursor();
+    Pointer::pointerController()->warpTo(g_freezePin, true);
+    Vector2D local;
+    if (auto surf = LayerPointerHold::surfaceBelowAt(g_freezePin, local)) {
+        if (g_pSeatManager)
+            g_pSeatManager->enterHoldBelow(surf, local);
+    }
+    LayerPointerHold::clearNoted();
+    if (g_pInputManager)
+        g_pInputManager->simulateMouseMovement();
+    Pointer::mgr()->endFreezeCursor();
+    g_haveFreezePin = false;
+}
+
+std::optional<Vector2D> LayerPointerHold::freezePin() {
+    if (!freeze())
+        return std::nullopt;
+    if (g_haveFreezePin)
+        return g_freezePin;
+    if (g_pInputManager)
+        return g_pInputManager->getMouseCoordsInternal();
+    return std::nullopt;
 }
 
 bool LayerPointerHold::isHeldLayer(PHLLS layer) {
@@ -63,6 +139,38 @@ bool LayerPointerHold::isHeldSurface(SP<CWLSurfaceResource> surf) {
             return true;
     }
     return false;
+}
+
+bool LayerPointerHold::isHeldClient(wl_client* client) {
+    if (!enabled() || !client)
+        return false;
+
+    for (const auto& layer : Desktop::layerState()->layers()) {
+        if (!isHeldLayer(layer))
+            continue;
+        const auto res = layer->resource();
+        if (res && res->client() == client)
+            return true;
+    }
+    return false;
+}
+
+SP<CWLSurfaceResource> LayerPointerHold::overlayAt(const Vector2D& global, Vector2D& local) {
+    if (!enabled())
+        return nullptr;
+
+    const auto PMON = State::monitorState()->query().vec(global).run();
+    if (!PMON)
+        return nullptr;
+
+    static const uint32_t kLayers[] = {ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, ZWLR_LAYER_SHELL_V1_LAYER_TOP};
+    for (const auto layerId : kLayers) {
+        PHLLS ls;
+        auto  surf = Desktop::viewState()->hitTest().layerSurfaceAt(global, &PMON->m_layerSurfaceLayers[layerId], &local, &ls);
+        if (surf && isHeldLayer(ls) && surf->getResource() && surf->getResource()->resource())
+            return surf;
+    }
+    return nullptr;
 }
 
 bool LayerPointerHold::isLogoKey(SP<IKeyboard> keyboard, uint32_t evdevKeycode) {
@@ -96,6 +204,45 @@ SP<CWLSurfaceResource> LayerPointerHold::below() {
 
 void LayerPointerHold::clearBelow() {
     g_below.reset();
+}
+
+SP<CWLSurfaceResource> LayerPointerHold::surfaceBelowAt(const Vector2D& global, Vector2D& local) {
+    const uint16_t props = Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS | Desktop::View::ALLOW_FLOATING | Desktop::View::FOLLOW_MOUSE_CHECK;
+    auto           win   = Desktop::viewState()->hitTest().windowAt(global, props);
+    if (!win || !win->wlSurface())
+        return nullptr;
+    if (win->backend().isX11()) {
+        local = global - win->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+        return win->wlSurface()->resource();
+    }
+    return Desktop::viewState()->hitTest().windowSurfaceAt(global, win, local);
+}
+
+void LayerPointerHold::beginSimulated() {
+    g_simulating = true;
+}
+
+void LayerPointerHold::endSimulated() {
+    g_simulating = false;
+}
+
+bool LayerPointerHold::simulated() {
+    return g_simulating;
+}
+
+void LayerPointerHold::notePos(const Vector2D& global) {
+    g_noted    = global;
+    g_hasNoted = true;
+}
+
+void LayerPointerHold::clearNoted() {
+    g_hasNoted = false;
+}
+
+bool LayerPointerHold::noted(const Vector2D& global) {
+    if (!g_hasNoted)
+        return false;
+    return std::abs(global.x - g_noted.x) < 2.0 && std::abs(global.y - g_noted.y) < 2.0;
 }
 
 std::optional<Vector2D> LayerPointerHold::belowLocal(const Vector2D& global) {

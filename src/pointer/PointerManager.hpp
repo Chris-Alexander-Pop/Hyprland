@@ -62,6 +62,21 @@ namespace Pointer {
 
         void renderSoftwareCursorsFor(PHLMONITOR pMonitor, const Time::steady_tp& now, CRegion& damage /* logical */, std::optional<Vector2D> overridePos = {} /* monitor-local */,
                                       bool screencopy = false, bool forceRender = false);
+        void renderSoftwareCursorImmediate(PHLMONITOR pMonitor, std::optional<Vector2D> overridePos = {});
+        void includeSoftwareCursorDamage(PHLMONITOR pMonitor, CRegion& damage);
+        void includeFreezePinDamage(PHLMONITOR pMonitor, CRegion& damage, const Vector2D& globalPin);
+
+        void beginFreezeCursor();
+        void endFreezeCursor();
+        void applyFreezeCursor();
+        bool hasFreezeCursor() const;
+        void renderFreezePinFor(PHLMONITOR pMonitor, const Vector2D& globalPin);
+        void renderFreezePinAt(PHLMONITOR pMonitor, const Vector2D& localPos);
+        SP<Render::ITexture>     freezeCursorTexture() const;
+        SP<Aquamarine::IBuffer>  freezeCursorBuffer() const;
+        Vector2D                 freezeCursorHotspot() const;
+        Vector2D                 freezeCursorSize() const;
+        std::string              freezeCursorName() const;
 
         // this is needed e.g. during screensharing where
         // the software cursors aren't locked during the cursor move, but they
@@ -190,7 +205,16 @@ namespace Pointer {
         // The representative lives only in m_currentCursorImage, including its texture cache.
         std::vector<SCursorImageData> m_cursorImages;
 
-        Vector2D                      m_pointerPos = {0, 0};
+        struct SFreezeCursor {
+            SP<Aquamarine::IBuffer> buffer;
+            SP<Render::ITexture>    tex;
+            Vector2D                hotspot;
+            Vector2D                size;
+            float                   scale = 1.F;
+            std::string             name;
+        } m_freezeCursor;
+
+        Vector2D m_pointerPos = {0, 0};
 
         struct SMonitorPointerState {
             SMonitorPointerState(const PHLMONITOR& m) : monitor(m) {}

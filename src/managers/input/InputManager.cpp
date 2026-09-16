@@ -68,10 +68,23 @@ using namespace Hyprutils::String;
 
 CInputManager::CInputManager() {
     m_listeners.setCursorShape = PROTO::cursorShape->m_events.setShape.listen([this](const CCursorShapeProtocol::SSetShapeEvent& event) {
-        if (!g_pSeatManager->m_state.pointerFocusResource)
-            return;
+        const auto reqClient = wl_resource_get_client(event.pMgr->resource());
+        const bool heldClient = LayerPointerHold::freeze() && LayerPointerHold::isHeldClient(reqClient);
+        if (!heldClient) {
+            if (!g_pSeatManager->m_state.pointerFocusResource)
+                return;
+            if (reqClient != g_pSeatManager->m_state.pointerFocusResource->client())
+                return;
+        }
 
-        if (wl_resource_get_client(event.pMgr->resource()) != g_pSeatManager->m_state.pointerFocusResource->client())
+        if (heldClient) {
+            if (!cursorImageUnlocked())
+                return;
+            g_pHyprRenderer->setCursorFromName(event.shapeName);
+            return;
+        }
+
+        if (m_cursorSurfaceInfo.name == event.shapeName && !m_cursorSurfaceInfo.wlSurface->exists())
             return;
 
         LOG(Log::DEBUG, "cursorImage request: shape {} -> {}", sc<uint32_t>(event.shape), event.shapeName);
@@ -166,7 +179,7 @@ void CInputManager::onMouseMoved(IPointer::SMotionEvent e) {
 
     // an interactive move or resize is an exclusive grab, so don't feed relative motion to the window being
     // dragged. a pointer-locked game would otherwise pan its camera from the drag itself.
-    if (!g_layoutManager->dragController()->target())
+    if (!g_layoutManager->dragController()->target() && !LayerPointerHold::freeze())
         PROTO::relativePointer->sendRelativeMotion(sc<uint64_t>(e.timeMs) * 1000, delta, unaccel);
     Pointer::mgr()->move(DELTA);
 
@@ -207,7 +220,11 @@ void CInputManager::onMouseWarp(IPointer::SMotionAbsoluteEvent e) {
 
 void CInputManager::simulateMouseMovement() {
     m_lastCursorPosFloored = m_lastCursorPosFloored - Vector2D(1, 1); // hack: force the mouseMoveUnified to report without making this a refocus.
+    if (LayerPointerHold::enabled())
+        LayerPointerHold::notePos(getMouseCoordsInternal());
+    LayerPointerHold::beginSimulated();
     mouseMoveUnified(Time::millis(Time::steadyNow()));
+    LayerPointerHold::endSimulated();
 }
 
 void CInputManager::sendMotionEventsToFocused() {
@@ -433,7 +450,8 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus, bool mouse, st
     // if we are holding a pointer button,
     // and we're not dnd-ing, don't refocus. Keep focus on last surface.
     if (!overridePos.has_value() && !PROTO::data->dndActive() && !m_currentlyHeldButtons.empty() && Desktop::focusState()->surface() &&
-        Desktop::focusState()->surface()->m_mapped && g_pSeatManager->m_state.pointerFocus && !m_hardInput) {
+        Desktop::focusState()->surface()->m_mapped && g_pSeatManager->m_state.pointerFocus && !m_hardInput &&
+        !(LayerPointerHold::enabled() && LayerPointerHold::layerMapped())) {
         foundSurface = g_pSeatManager->m_state.pointerFocus.lock();
 
         // IME popups aren't desktop-like elements
@@ -802,7 +820,17 @@ void CInputManager::onMouseButton(IPointer::SButtonEvent e, SP<IPointer> mouse) 
     g_pSeatManager->sendPointerFrame();
 }
 
+void CInputManager::setAppCursorName(const std::string& name) {
+    m_cursorSurfaceInfo.wlSurface->unassign();
+    m_cursorSurfaceInfo.vHotspot = {};
+    m_cursorSurfaceInfo.name     = name.empty() ? "left_ptr" : name;
+    m_cursorSurfaceInfo.hidden   = false;
+}
+
 void CInputManager::processMouseRequest(const CSeatManager::SSetCursorEvent& event) {
+    if (LayerPointerHold::freeze())
+        return;
+
     LOG(Log::DEBUG, "cursorImage request: surface {:x}", rc<uintptr_t>(event.surf.get()));
 
     if (event.surf != m_cursorSurfaceInfo.wlSurface->resource()) {
@@ -886,6 +914,9 @@ void CInputManager::processMouseDownNormal(const IPointer::SButtonEvent& e, SP<I
     if (!PASS && !*PPASSMOUSE)
         return;
 
+    if (e.state == WL_POINTER_BUTTON_STATE_PRESSED)
+        mouseMoveUnified(e.timeMs, false);
+
     const auto mouseCoords = g_pInputManager->getMouseCoordsInternal();
     const auto w           = Desktop::viewState()->hitTest().windowAt(mouseCoords, Desktop::View::ALLOW_FLOATING | Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS);
 
@@ -916,6 +947,10 @@ void CInputManager::processMouseDownNormal(const IPointer::SButtonEvent& e, SP<I
 
             if ((g_pSeatManager->m_mouse.expired() || !isConstrained()) /* No constraints */
                 && (w && Desktop::focusState()->window() != w) /* window should change */) {
+                const auto pFocus = g_pSeatManager->m_state.pointerFocus.lock();
+                if (m_lastFocusOnLS || LayerPointerHold::isHeldSurface(pFocus))
+                    break;
+
                 // a bit hacky
                 // if we only pressed one button, allow us to refocus. m_lCurrentlyHeldButtons.size() > 0 will stick the focus
                 if (m_currentlyHeldButtons.size() == 1) {

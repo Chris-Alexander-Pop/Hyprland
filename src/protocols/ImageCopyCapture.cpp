@@ -2,6 +2,7 @@
 #include "../managers/screenshare/ScreenshareManager.hpp"
 #include "../managers/permissions/DynamicPermissionManager.hpp"
 #include "../pointer/PointerManager.hpp"
+#include "../managers/input/LayerPointerHold.hpp"
 #include "./core/Seat.hpp"
 #include "LinuxDMABUF.hpp"
 #include "../desktop/view/window/Window.hpp"
@@ -309,9 +310,16 @@ void CImageCopyCaptureCursorSession::sendCursorEvents() {
     if (PERM != PERMISSION_RULE_ALLOW_MODE_ALLOW)
         return;
 
-    const auto PMONITOR  = m_source->m_monitor.expired() ? m_source->m_window->m_monitor.lock() : m_source->m_monitor.lock();
     CBox       sourceBox = m_source->logicalBox();
-    bool       overlaps  = Pointer::mgr()->getCursorBoxGlobal().overlaps(sourceBox);
+    const auto pin       = LayerPointerHold::freezePin();
+    const Vector2D global = pin.value_or(Pointer::mgr()->untransformedPosition());
+    CBox           cursorBox = Pointer::mgr()->getCursorBoxGlobal();
+    if (pin) {
+        const auto hot = Pointer::mgr()->hasFreezeCursor() ? Pointer::mgr()->freezeCursorHotspot() : Pointer::mgr()->hotspot();
+        cursorBox.x    = pin->x - hot.x;
+        cursorBox.y    = pin->y - hot.y;
+    }
+    bool overlaps = cursorBox.overlaps(sourceBox);
 
     if (m_entered && !overlaps) {
         m_entered = false;
@@ -325,13 +333,13 @@ void CImageCopyCaptureCursorSession::sendCursorEvents() {
     if (!overlaps)
         return;
 
-    Vector2D pos = Pointer::mgr()->untransformedPosition() - sourceBox.pos();
+    Vector2D pos = global - sourceBox.pos();
     if (pos != m_pos) {
         m_pos = pos;
         m_resource->sendPosition(m_pos.x, m_pos.y);
     }
 
-    Vector2D hotspot = Pointer::mgr()->hotspot();
+    Vector2D hotspot = Pointer::mgr()->hasFreezeCursor() ? Pointer::mgr()->freezeCursorHotspot() : Pointer::mgr()->hotspot();
     if (hotspot != m_hotspot) {
         m_hotspot = hotspot;
         m_resource->sendHotspot(m_hotspot.x, m_hotspot.y);

@@ -1,5 +1,6 @@
 #include "PointerManager.hpp"
 #include "PointerTransformer.hpp"
+#include "cursor/CursorManager.hpp"
 #include "../Compositor.hpp"
 #include "../config/ConfigValue.hpp"
 #include "../config/shared/actions/ConfigActions.hpp"
@@ -672,7 +673,7 @@ void CPointerManager::renderSoftwareCursorsFor(PHLMONITOR pMonitor, const Time::
 
     auto state = stateFor(pMonitor);
 
-    if (!state->hardwareFailed && state->softwareLocks == 0 && !screencopy) {
+    if (!forceRender && !state->hardwareFailed && state->softwareLocks == 0 && !screencopy) {
         if (m_currentCursorImage.surface)
             m_currentCursorImage.surface->resource()->frame(now);
         return;
@@ -719,6 +720,143 @@ void CPointerManager::renderSoftwareCursorsFor(PHLMONITOR pMonitor, const Time::
 
     if (m_currentCursorImage.surface)
         m_currentCursorImage.surface->resource()->frame(now);
+}
+
+void CPointerManager::renderSoftwareCursorImmediate(PHLMONITOR pMonitor, std::optional<Vector2D> overridePos) {
+    if (!pMonitor || !hasCursor())
+        return;
+
+    auto texture = getCurrentCursorTexture();
+    if (!texture)
+        return;
+
+    auto state = stateFor(pMonitor);
+    auto box   = state->box.copy();
+    if (overridePos.has_value()) {
+        box.x = overridePos->x;
+        box.y = overridePos->y;
+        box.translate(-m_currentCursorImage.hotspot);
+    }
+
+    if (box.intersection(CBox{{}, {pMonitor->m_size}}).empty())
+        return;
+
+    box.scale(pMonitor->m_scale);
+    box.x = std::round(box.x);
+    box.y = std::round(box.y);
+
+    if (Render::GL::g_pHyprOpenGL)
+        Render::GL::g_pHyprOpenGL->renderTexturePrimitive(texture, box.round());
+
+    state->swRendered    = true;
+    state->swRenderedBox = overridePos.has_value() ? CBox{*overridePos - m_currentCursorImage.hotspot, cursorSizeLogical()} : state->box;
+}
+
+void CPointerManager::includeSoftwareCursorDamage(PHLMONITOR pMonitor, CRegion& damage) {
+    if (!pMonitor)
+        return;
+    auto add = [&](CBox b) {
+        if (b.empty())
+            return;
+        damage.add(b.copy().expand(4).scale(pMonitor->m_scale).round());
+    };
+    auto state = stateFor(pMonitor);
+    add(state->box);
+    if (state->swRendered)
+        add(state->swRenderedBox);
+}
+
+void CPointerManager::includeFreezePinDamage(PHLMONITOR pMonitor, CRegion& damage, const Vector2D& globalPin) {
+    if (!pMonitor || !m_freezeCursor.tex)
+        return;
+    CBox box{globalPin - pMonitor->m_position - m_freezeCursor.hotspot, m_freezeCursor.size};
+    if (box.intersection(CBox{{}, {pMonitor->m_size}}).empty())
+        return;
+    damage.add(box.expand(4).scale(pMonitor->m_scale).round());
+}
+
+void CPointerManager::beginFreezeCursor() {
+    m_freezeCursor         = {};
+    m_freezeCursor.hotspot = m_currentCursorImage.hotspot;
+    m_freezeCursor.size    = cursorSizeLogical();
+    m_freezeCursor.scale   = m_currentCursorImage.scale;
+    if (g_pHyprRenderer && !g_pHyprRenderer->m_lastCursorData.name.empty())
+        m_freezeCursor.name = g_pHyprRenderer->m_lastCursorData.name;
+
+    Vector2D hot, sz;
+    if (!m_freezeCursor.name.empty()) {
+        if (auto buf = Pointer::Cursor::mgr()->bufferForName(m_freezeCursor.name, hot, sz)) {
+            m_freezeCursor.buffer  = buf;
+            m_freezeCursor.hotspot = hot;
+            m_freezeCursor.size    = sz;
+            if (g_pHyprRenderer)
+                m_freezeCursor.tex = g_pHyprRenderer->createTexture(buf, true);
+        }
+    }
+    if (!m_freezeCursor.tex && m_currentCursorImage.pBuffer && g_pHyprRenderer) {
+        m_freezeCursor.buffer = m_currentCursorImage.pBuffer;
+        m_freezeCursor.tex    = g_pHyprRenderer->createTexture(m_currentCursorImage.pBuffer, true);
+    }
+    if (!m_freezeCursor.tex)
+        m_freezeCursor.tex = getCurrentCursorTexture();
+}
+
+void CPointerManager::applyFreezeCursor() {
+    if (!m_freezeCursor.buffer)
+        return;
+    setCursorBuffer(m_freezeCursor.buffer, m_freezeCursor.hotspot, m_freezeCursor.scale > 0.F ? m_freezeCursor.scale : 1.F);
+}
+
+void CPointerManager::endFreezeCursor() {
+    m_freezeCursor = {};
+}
+
+bool CPointerManager::hasFreezeCursor() const {
+    return !!m_freezeCursor.tex;
+}
+
+SP<Render::ITexture> CPointerManager::freezeCursorTexture() const {
+    return m_freezeCursor.tex;
+}
+
+SP<Aquamarine::IBuffer> CPointerManager::freezeCursorBuffer() const {
+    return m_freezeCursor.buffer;
+}
+
+Vector2D CPointerManager::freezeCursorHotspot() const {
+    return m_freezeCursor.hotspot;
+}
+
+Vector2D CPointerManager::freezeCursorSize() const {
+    return m_freezeCursor.size;
+}
+
+std::string CPointerManager::freezeCursorName() const {
+    return m_freezeCursor.name;
+}
+
+void CPointerManager::renderFreezePinFor(PHLMONITOR pMonitor, const Vector2D& globalPin) {
+    if (!pMonitor)
+        return;
+    renderFreezePinAt(pMonitor, globalPin - pMonitor->m_position);
+}
+
+void CPointerManager::renderFreezePinAt(PHLMONITOR pMonitor, const Vector2D& localPos) {
+    if (!pMonitor || !m_freezeCursor.tex)
+        return;
+
+    CBox box{localPos - m_freezeCursor.hotspot, m_freezeCursor.size};
+    if (box.intersection(CBox{{}, {pMonitor->m_size}}).empty())
+        return;
+
+    box.scale(pMonitor->m_scale);
+    box.x = std::round(box.x);
+    box.y = std::round(box.y);
+
+    g_pHyprRenderer->m_renderPass.add(makeUnique<CTexPassElement>(CTexPassElement::SRenderData{
+        .tex = m_freezeCursor.tex,
+        .box = box.round(),
+    }));
 }
 
 Vector2D CPointerManager::getCursorPosForMonitor(PHLMONITOR pMonitor) {

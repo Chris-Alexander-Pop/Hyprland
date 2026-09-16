@@ -3,6 +3,7 @@
 
 #include "../../../managers/eventLoop/EventLoopManager.hpp"
 #include "../../../managers/input/InputManager.hpp"
+#include "../../../managers/input/LayerPointerHold.hpp"
 #include "../../../render/Renderer.hpp"
 #include "../../../render/decorations/CHyprGroupBarDecoration.hpp"
 #include "../../../Compositor.hpp"
@@ -156,6 +157,9 @@ void CPropRefresher::refreshProp(const bool execdAsScheduled) {
 
     if (m_propsTripped & REFRESH_GRADIENTS_GROUPBAR)
         refreshGroupBarGradients();
+
+    if (m_propsTripped & REFRESH_LAYER_HOLD_FREEZE)
+        LayerPointerHold::syncFreezePin();
 
     m_scheduled           = false;
     m_scheduledRefreshSeq = 0;

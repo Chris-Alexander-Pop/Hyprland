@@ -43,6 +43,8 @@ namespace Pointer::Cursor {
 
         SP<Aquamarine::IBuffer> getCursorBuffer();
 
+        SP<CCursorBuffer>       bufferForName(const std::string& name, Vector2D& hotspotLogical, Vector2D& sizeLogical);
+
         void                    setCursorFromName(const std::string& name);
         void                    setCursorSurface(SP<Desktop::View::CWLSurface> surf, const Vector2D& hotspot);
         void                    setCursorBuffer(SP<CCursorBuffer> buf, const Vector2D& hotspot, const float& scale);

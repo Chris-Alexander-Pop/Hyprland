@@ -478,7 +478,8 @@ SBindResult CKeybindManager::processEvent(const SBindEventContext& context, cons
             continue;
 
         if (bind->hasFlag(BIND_FLAG_CATCH_ALL)) {
-            if (context.pressed && bind->matchesContext(context))
+            const bool mouseOrSwitch = context.trigger && context.trigger->event;
+            if (context.pressed && !mouseOrSwitch && bind->matchesContext(context))
                 catchAlls.emplace_back(bind);
             continue;
         }

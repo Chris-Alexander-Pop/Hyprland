@@ -13,6 +13,7 @@
 #include "../../config/ConfigValue.hpp"
 #include "../../output/Monitor.hpp"
 #include "../../managers/input/InputManager.hpp"
+#include "../../managers/input/LayerPointerHold.hpp"
 #include "../../ipc/s2/S2.hpp"
 #include "../../managers/fullscreen/FullscreenController.hpp"
 #include "../../event/EventBus.hpp"
@@ -193,6 +194,9 @@ void CLayerSurface::onMap() {
 
     m_wlSurface->resource()->enter(PMONITOR->m_self.lock());
 
+    if (m_namespace == LayerPointerHold::targetNamespace())
+        LayerPointerHold::syncFreezePin();
+
     const bool KEYBOARD_EXCLUSIVE = m_layerSurface->m_current.keyboardInteractivity == ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE;
 
     if (KEYBOARD_EXCLUSIVE)
@@ -264,9 +268,12 @@ void CLayerSurface::onUnmap() {
 
     Desktop::fadingOutState()->add(CLayerFadeout::create(m_self.lock(), SNAPSHOT, SOURCEALPHA));
 
+    const bool heldNs = m_namespace == LayerPointerHold::targetNamespace();
     m_mapped = false;
     if (m_layerSurface && m_layerSurface->m_surface)
         m_layerSurface->m_surface->unmap();
+    if (heldNs)
+        LayerPointerHold::syncFreezePin();
 
     const auto PMONITOR = m_monitor.lock();
 

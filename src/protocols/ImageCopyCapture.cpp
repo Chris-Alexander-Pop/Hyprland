@@ -310,9 +310,9 @@ void CImageCopyCaptureCursorSession::sendCursorEvents() {
     if (PERM != PERMISSION_RULE_ALLOW_MODE_ALLOW)
         return;
 
-    CBox       sourceBox = m_source->logicalBox();
-    const auto pin       = LayerPointerHold::freezePin();
-    const Vector2D global = pin.value_or(Pointer::mgr()->untransformedPosition());
+    CBox           sourceBox = m_source->logicalBox();
+    const auto     pin       = LayerPointerHold::freezePin();
+    const Vector2D global    = pin.value_or(Pointer::mgr()->untransformedPosition());
     CBox           cursorBox = Pointer::mgr()->getCursorBoxGlobal();
     if (pin) {
         const auto hot = Pointer::mgr()->hasFreezeCursor() ? Pointer::mgr()->freezeCursorHotspot() : Pointer::mgr()->hotspot();

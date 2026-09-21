@@ -28,13 +28,13 @@ using namespace Desktop::View;
 
 static WP<CWLSurfaceResource> g_below;
 static Vector2D               g_noted{};
-static bool                   g_hasNoted    = false;
+static bool                   g_hasNoted   = false;
 static bool                   g_simulating = false;
 static Vector2D               g_freezePin{};
 static bool                   g_haveFreezePin = false;
 static bool                   g_freezeWas     = false;
 
-static bool surfaceInTree(SP<CWLSurfaceResource> root, SP<CWLSurfaceResource> surface) {
+static bool                   surfaceInTree(SP<CWLSurfaceResource> root, SP<CWLSurfaceResource> surface) {
     if (!root || !surface)
         return false;
     if (root == surface)
@@ -175,7 +175,7 @@ bool LayerPointerHold::freezeBlocksAt(const Vector2D& global) {
 }
 
 void LayerPointerHold::debugLog(const std::string& msg) {
-    const char* dir = getenv("XDG_RUNTIME_DIR");
+    const char* dir  = getenv("XDG_RUNTIME_DIR");
     const auto  path = std::string{dir && dir[0] ? dir : "/tmp"} + "/screen-shadow-hypr.log";
     FILE*       f    = fopen(path.c_str(), "a");
     if (!f)

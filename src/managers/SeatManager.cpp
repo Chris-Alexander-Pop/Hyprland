@@ -403,7 +403,7 @@ void CSeatManager::bindPointerFocusResource(SP<CWLSurfaceResource> surf) {
 
 static WP<CWLSurfaceResource> g_holdOverlay;
 
-void CSeatManager::resetHoldOverlay() {
+void                          CSeatManager::resetHoldOverlay() {
     if (auto old = g_holdOverlay.lock()) {
         sendPointerLeaveOnClient(old->client());
         sendPointerFrameOnClient(old->client());
@@ -702,15 +702,8 @@ void CSeatManager::sendPointerButton(uint32_t timeMs, uint32_t key, wl_pointer_b
                     who = std::format("{} {}", win->metadata().appID(), win->metadata().title());
             }
         }
-        LayerPointerHold::debugLog(std::format(
-            "button punch state={} cur={:.0f},{:.0f} pin={:.0f},{:.0f} target={} sameClient={}",
-            sc<int>(state_),
-            global.x,
-            global.y,
-            pin ? pin->x : -1,
-            pin ? pin->y : -1,
-            who,
-            below && target && below->client() == target->client()));
+        LayerPointerHold::debugLog(std::format("button punch state={} cur={:.0f},{:.0f} pin={:.0f},{:.0f} target={} sameClient={}", sc<int>(state_), global.x, global.y,
+                                               pin ? pin->x : -1, pin ? pin->y : -1, who, below && target && below->client() == target->client()));
 
         if (!target)
             return;

@@ -828,7 +828,7 @@ void CInputManager::setAppCursorName(const std::string& name) {
 }
 
 void CInputManager::processMouseRequest(const CSeatManager::SSetCursorEvent& event) {
-    if (LayerPointerHold::freeze())
+    if (LayerPointerHold::freeze() && LayerPointerHold::isBelowSurface(event.surf))
         return;
 
     LOG(Log::DEBUG, "cursorImage request: surface {:x}", rc<uintptr_t>(event.surf.get()));
@@ -947,8 +947,10 @@ void CInputManager::processMouseDownNormal(const IPointer::SButtonEvent& e, SP<I
 
             if ((g_pSeatManager->m_mouse.expired() || !isConstrained()) /* No constraints */
                 && (w && Desktop::focusState()->window() != w) /* window should change */) {
-                const auto pFocus = g_pSeatManager->m_state.pointerFocus.lock();
-                if (m_lastFocusOnLS || LayerPointerHold::isHeldSurface(pFocus))
+                if (LayerPointerHold::freeze())
+                    break;
+                Vector2D olocal;
+                if (LayerPointerHold::overlayAt(mouseCoords, olocal))
                     break;
 
                 // a bit hacky

@@ -833,7 +833,8 @@ std::vector<SP<IValue>> Values::getConfigValues() {
          */
 
         MS<Int>("quirks:prefer_hdr", "Prefer HDR mode.", 0, {.min = 0, .max = 2, .map = OptionMap{{"disable", 0}, {"enable", 1}, {"gamescope_only", 2}}}),
-        MS<Bool>("quirks:skip_non_kms_dmabuf_formats", "Do not report dmabuf formats which cannot be imported into KMS", true),
+        MS<Bool>("quirks:skip_non_kms_dmabuf_formats",
+                 "Do not report dmabuf formats which cannot be imported into KMS. Not applied to the composition tranche when the render GPU is not the scanout GPU.", true),
     };
 
 #undef MS

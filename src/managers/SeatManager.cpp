@@ -21,6 +21,9 @@
 #include <hyprutils/utils/ScopeGuard.hpp>
 #include <ranges>
 #include <wayland-server.h>
+#include <format>
+#include "../desktop/view/window/Window.hpp"
+#include "../desktop/view/WLSurface.hpp"
 
 using namespace Hyprutils::Utils;
 
@@ -609,7 +612,8 @@ void CSeatManager::sendPointerMotion(uint32_t timeMs, const Vector2D& local) {
             if (g_pHyprRenderer)
                 g_pHyprRenderer->setCursorFromName("left_ptr", true);
         }
-        return;
+        if (LayerPointerHold::freezeBlocksAt(global))
+            return;
     }
 
     const bool holdMapped = LayerPointerHold::enabled() && LayerPointerHold::layerMapped();
@@ -664,21 +668,75 @@ void CSeatManager::sendPointerButton(uint32_t timeMs, uint32_t key, wl_pointer_b
     const auto global = g_pInputManager->getMouseCoordsInternal();
     if (LayerPointerHold::freeze()) {
         Vector2D olocal;
-        auto     ov = LayerPointerHold::overlayAt(global, olocal);
-        if (!ov)
-            ov = g_holdOverlay.lock();
-        if (ov) {
-            if (LayerPointerHold::overlayAt(global, olocal))
-                focusHoldOverlay(ov, olocal);
-            enterAllClientPointers(ov, m_lastLocalCoords);
+        if (auto ov = LayerPointerHold::overlayAt(global, olocal)) {
+            focusHoldOverlay(ov, olocal);
+            enterAllClientPointers(ov, olocal);
             sendPointerFrameOnClient(ov->client());
             for (auto const& p : PROTO::seat->m_pointers) {
                 if (!p || !p->m_owner || p->m_owner->client() != ov->client())
                     continue;
                 p->sendButton(timeMs, key, state_);
             }
+            LayerPointerHold::debugLog(std::format("button overlay state={} at {:.0f},{:.0f}", sc<int>(state_), global.x, global.y));
             return;
         }
+        if (g_holdOverlay)
+            resetHoldOverlay();
+
+        Vector2D realLocal;
+        auto     target = LayerPointerHold::surfaceBelowAt(global, realLocal);
+        auto     below  = LayerPointerHold::below();
+        auto     pin    = LayerPointerHold::freezePin();
+        Vector2D pinLocal{};
+        if (below && pin) {
+            if (auto hl = Desktop::View::CWLSurface::fromResource(below)) {
+                if (auto box = hl->getSurfaceBoxGlobal())
+                    pinLocal = *pin - box->pos();
+            }
+        }
+
+        std::string who = "none";
+        if (target) {
+            if (auto hl = Desktop::View::CWLSurface::fromResource(target)) {
+                if (auto win = Desktop::View::CWindow::fromView(hl->view()))
+                    who = std::format("{} {}", win->metadata().appID(), win->metadata().title());
+            }
+        }
+        LayerPointerHold::debugLog(std::format(
+            "button punch state={} cur={:.0f},{:.0f} pin={:.0f},{:.0f} target={} sameClient={}",
+            sc<int>(state_),
+            global.x,
+            global.y,
+            pin ? pin->x : -1,
+            pin ? pin->y : -1,
+            who,
+            below && target && below->client() == target->client()));
+
+        if (!target)
+            return;
+
+        auto sendButtons = [&](wl_client* client) {
+            for (auto const& p : PROTO::seat->m_pointers) {
+                if (!p || !p->m_owner || p->m_owner->client() != client)
+                    continue;
+                p->sendButton(timeMs, key, state_);
+            }
+        };
+
+        LayerPointerHold::beginSimulated();
+        enterAllClientPointers(target, realLocal);
+        sendPointerMotionOnClient(target->client(), timeMs, realLocal);
+        sendButtons(target->client());
+        sendPointerFrameOnClient(target->client());
+        if (below && target->client() != below->client() && state_ == WL_POINTER_BUTTON_STATE_RELEASED) {
+            sendPointerLeaveOnClient(target->client());
+            sendPointerFrameOnClient(target->client());
+        }
+        if (below) {
+            sendPointerMotionOnClient(below->client(), timeMs, pinLocal);
+            sendPointerFrameOnClient(below->client());
+        }
+        LayerPointerHold::endSimulated();
         return;
     }
 
@@ -756,29 +814,27 @@ void CSeatManager::sendPointerAxis(uint32_t timeMs, wl_pointer_axis axis, double
     if (LayerPointerHold::freeze()) {
         const auto global = g_pInputManager->getMouseCoordsInternal();
         Vector2D   olocal;
-        auto       ov = LayerPointerHold::overlayAt(global, olocal);
-        if (!ov)
-            ov = g_holdOverlay.lock();
-        if (!ov)
-            return;
-        if (LayerPointerHold::overlayAt(global, olocal))
+        if (auto ov = LayerPointerHold::overlayAt(global, olocal)) {
             focusHoldOverlay(ov, olocal);
-        for (auto const& p : PROTO::seat->m_pointers) {
-            if (!p || !p->m_owner || p->m_owner->client() != ov->client())
-                continue;
-            p->sendAxis(timeMs, axis, value);
-            p->sendAxisSource(source);
-            p->sendAxisRelativeDirection(axis, relative);
-            if (source == 0) {
-                if (p->version() >= 8)
-                    p->sendAxisValue120(axis, value120);
-                else
-                    p->sendAxisDiscrete(axis, discrete);
-            } else if (value == 0)
-                p->sendAxisStop(timeMs, axis);
+            for (auto const& p : PROTO::seat->m_pointers) {
+                if (!p || !p->m_owner || p->m_owner->client() != ov->client())
+                    continue;
+                p->sendAxis(timeMs, axis, value);
+                p->sendAxisSource(source);
+                p->sendAxisRelativeDirection(axis, relative);
+                if (source == 0) {
+                    if (p->version() >= 8)
+                        p->sendAxisValue120(axis, value120);
+                    else
+                        p->sendAxisDiscrete(axis, discrete);
+                } else if (value == 0)
+                    p->sendAxisStop(timeMs, axis);
+            }
+            sendPointerFrameOnClient(ov->client());
+            return;
         }
-        sendPointerFrameOnClient(ov->client());
-        return;
+        if (g_holdOverlay)
+            resetHoldOverlay();
     }
 
     if (!m_state.pointerFocusResource)

@@ -3,10 +3,10 @@
 #include <set>
 #include <tuple>
 #include "../helpers/MiscFunctions.hpp"
+#include "../helpers/Drm.hpp"
 #include <sys/mman.h>
 #include <xf86drm.h>
 #include <fcntl.h>
-#include <sys/stat.h>
 #include "core/Compositor.hpp"
 #include "render/Renderer.hpp"
 #include "types/DMABuffer.hpp"
@@ -18,11 +18,53 @@
 
 using namespace Hyprutils::OS;
 
-static std::optional<dev_t> devIDFromFD(int fd) {
-    struct stat stat;
-    if (fstat(fd, &stat) != 0)
+static std::optional<dev_t> scanoutDevIDFromMonitor(PHLMONITOR mon) {
+    if (!mon || !mon->m_output)
         return {};
-    return stat.st_rdev;
+
+    auto backend = mon->m_output->getBackend();
+    if (!backend)
+        return {};
+
+    if (auto alloc = backend->preferredAllocator()) {
+        const int fd = alloc->drmFD();
+        if (fd >= 0) {
+            if (auto id = DRM::devIDFromFD(fd))
+                return id;
+        }
+    }
+
+    const int fd = backend->drmFD();
+    if (fd < 0)
+        return {};
+
+    return DRM::devIDFromFD(fd);
+}
+
+static SDMABUFTranche scanoutTrancheForMonitor(PHLMONITOR mon, dev_t rendererDev) {
+    SDMABUFTranche tranche{
+        .device = rendererDev,
+        .flags  = ZWP_LINUX_DMABUF_FEEDBACK_V1_TRANCHE_FLAGS_SCANOUT,
+    };
+
+    if (!mon || !mon->m_output)
+        return tranche;
+
+    tranche.device  = scanoutDevIDFromMonitor(mon).value_or(rendererDev);
+    tranche.formats = mon->m_output->getRenderFormats();
+    return tranche;
+}
+
+static bool rendererMatchesAllScanoutDevices(dev_t rendererDev, const std::vector<std::pair<PHLMONITORREF, SDMABUFTranche>>& tranches) {
+    if (tranches.empty())
+        return true;
+
+    for (auto const& [monitor, tranche] : tranches) {
+        if (tranche.device != rendererDev)
+            return false;
+    }
+
+    return true;
 }
 
 CDMABUFFormatTable::CDMABUFFormatTable(SDMABUFTranche _rendererTranche, std::vector<std::pair<PHLMONITORREF, SDMABUFTranche>> tranches_) :
@@ -36,11 +78,19 @@ CDMABUFFormatTable::CDMABUFFormatTable(SDMABUFTranche _rendererTranche, std::vec
     // insert formats into vec if they got inserted into set, meaning they're unique
     size_t i = 0;
 
+    // Intersection with KMS formats is only valid when the compositor samples
+    // on the same GPU that scans out. On hybrid (NVIDIA render, Intel eDP) that
+    // drops the modifiers NVIDIA EGL will actually allocate, so clients never
+    // attach a wl_buffer. Direct-scanout still uses the per-monitor SCANOUT tranche.
+    const bool filterRendererToKms = *PSKIP_NON_KMS && !m_monitorTranches.empty() && rendererMatchesAllScanoutDevices(m_rendererTranche.device, m_monitorTranches);
+    if (*PSKIP_NON_KMS && !m_monitorTranches.empty() && !filterRendererToKms)
+        LOG(Log::DEBUG, "linux-dmabuf: render GPU != scanout GPU, keeping renderer formats (quirks:skip_non_kms_dmabuf_formats not applied to composition tranche)");
+
     m_rendererTranche.indices.clear();
     for (auto const& fmt : m_rendererTranche.formats) {
         for (auto const& mod : fmt.modifiers) {
             LOG(Log::TRACE, "Render format 0x{:x} ({}) with mod 0x{:x} ({})", fmt.drmFormat, NFormatUtils::drmFormatName(fmt.drmFormat), mod, NFormatUtils::drmModifierName(mod));
-            if (*PSKIP_NON_KMS && !m_monitorTranches.empty()) {
+            if (filterRendererToKms) {
                 if (std::ranges::none_of(m_monitorTranches, [fmt, mod](const std::pair<PHLMONITORREF, SDMABUFTranche>& pair) {
                         return std::ranges::any_of(pair.second.formats, [fmt, mod](const SDRMFormat& format) {
                             return format.drmFormat == fmt.drmFormat && std::ranges::any_of(format.modifiers, [mod](uint64_t modifier) { return mod == modifier; });
@@ -443,7 +493,7 @@ void CLinuxDMABUFResource::sendMods() {
 CLinuxDMABufV1Protocol::CLinuxDMABufV1Protocol(const wl_interface* iface, const int& ver, const std::string& name) : IWaylandProtocol(iface, ver, name) {
     static auto P = Event::bus()->m_events.ready.listen([this] {
         int  rendererFD = g_pCompositor->m_drmRenderNode.fd >= 0 ? g_pCompositor->m_drmRenderNode.fd : g_pCompositor->m_drm.fd;
-        auto dev        = devIDFromFD(rendererFD);
+        auto dev        = DRM::devIDFromFD(rendererFD);
 
         if (!dev.has_value()) {
             LOG(Log::ERR, "failed to get drm dev, disabling linux dmabuf");
@@ -462,25 +512,14 @@ CLinuxDMABufV1Protocol::CLinuxDMABufV1Protocol(const wl_interface* iface, const 
         std::vector<std::pair<PHLMONITORREF, SDMABUFTranche>> tches;
 
         if (g_pCompositor->m_aqBackend->hasSession()) {
-            // this assumes there's only 1 device used for both scanout and rendering
-            // also that each monitor never changes its primary plane
+            // Scanout tranches must advertise the output's KMS device, not the
+            // compositor render GPU. They can differ (NVIDIA render, Intel eDP).
 
-            for (auto const& mon : State::monitorState()->monitors()) {
-                auto tranche = SDMABUFTranche{
-                    .device  = m_mainDevice,
-                    .flags   = ZWP_LINUX_DMABUF_FEEDBACK_V1_TRANCHE_FLAGS_SCANOUT,
-                    .formats = mon->m_output->getRenderFormats(),
-                };
-                tches.emplace_back(mon, tranche);
-            }
+            for (auto const& mon : State::monitorState()->monitors())
+                tches.emplace_back(mon, scanoutTrancheForMonitor(mon, m_mainDevice));
 
             static auto monitorAdded = Event::bus()->m_events.monitor.added.listen([this](PHLMONITOR mon) {
-                auto tranche = SDMABUFTranche{
-                    .device  = m_mainDevice,
-                    .flags   = ZWP_LINUX_DMABUF_FEEDBACK_V1_TRANCHE_FLAGS_SCANOUT,
-                    .formats = mon->m_output->getRenderFormats(),
-                };
-                m_formatTable->m_monitorTranches.emplace_back(mon, tranche);
+                m_formatTable->m_monitorTranches.emplace_back(mon, scanoutTrancheForMonitor(mon, m_mainDevice));
                 resetFormatTable();
             });
 

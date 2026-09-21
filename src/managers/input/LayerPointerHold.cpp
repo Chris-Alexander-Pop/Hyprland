@@ -20,6 +20,9 @@
 
 #include <wayland-server.h>
 #include <xkbcommon/xkbcommon.h>
+#include <ctime>
+#include <cstdio>
+#include <format>
 
 using namespace Desktop::View;
 
@@ -75,9 +78,11 @@ void LayerPointerHold::syncFreezePin() {
         Pointer::mgr()->beginFreezeCursor();
         if (g_pHyprRenderer)
             g_pHyprRenderer->damageBox(CBox{g_freezePin - Vector2D{32, 32}, Vector2D{96, 96}});
+        debugLog(std::format("pin-on {:.0f},{:.0f} mapped={}", g_freezePin.x, g_freezePin.y, layerMapped()));
         return;
     }
 
+    debugLog(std::format("pin-off warp={:.0f},{:.0f} have={}", g_freezePin.x, g_freezePin.y, g_haveFreezePin));
     if (!g_haveFreezePin)
         return;
 
@@ -153,6 +158,33 @@ bool LayerPointerHold::isHeldClient(wl_client* client) {
             return true;
     }
     return false;
+}
+
+bool LayerPointerHold::isBelowSurface(SP<CWLSurfaceResource> surf) {
+    auto below = g_below.lock();
+    return below && surf && surfaceInTree(below, surf);
+}
+
+bool LayerPointerHold::freezeBlocksAt(const Vector2D& global) {
+    if (!freeze())
+        return false;
+    Vector2D local;
+    if (overlayAt(global, local))
+        return false;
+    return isBelowSurface(surfaceBelowAt(global, local));
+}
+
+void LayerPointerHold::debugLog(const std::string& msg) {
+    const char* dir = getenv("XDG_RUNTIME_DIR");
+    const auto  path = std::string{dir && dir[0] ? dir : "/tmp"} + "/screen-shadow-hypr.log";
+    FILE*       f    = fopen(path.c_str(), "a");
+    if (!f)
+        return;
+    timespec ts{};
+    clock_gettime(CLOCK_REALTIME, &ts);
+    const long long ms = sc<long long>(ts.tv_sec) * 1000 + ts.tv_nsec / 1000000;
+    fprintf(f, "%lld hypr %s\n", ms, msg.c_str());
+    fclose(f);
 }
 
 SP<CWLSurfaceResource> LayerPointerHold::overlayAt(const Vector2D& global, Vector2D& local) {

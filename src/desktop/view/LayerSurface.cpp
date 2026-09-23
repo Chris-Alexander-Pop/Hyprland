@@ -269,7 +269,7 @@ void CLayerSurface::onUnmap() {
     Desktop::fadingOutState()->add(CLayerFadeout::create(m_self.lock(), SNAPSHOT, SOURCEALPHA));
 
     const bool heldNs = m_namespace == LayerPointerHold::targetNamespace();
-    m_mapped = false;
+    m_mapped          = false;
     if (m_layerSurface && m_layerSurface->m_surface)
         m_layerSurface->m_surface->unmap();
     if (heldNs)

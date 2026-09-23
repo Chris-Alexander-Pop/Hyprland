@@ -145,9 +145,9 @@ namespace Screenshare {
             CHyprSignalListener cursorChanged;
         } m_listeners;
 
-        bool copy();
-        void render();
-        void calculateConstraints();
+        bool                     copy();
+        void                     render();
+        void                     calculateConstraints();
 
         SP<Render::IFramebuffer> m_copyFB;
 

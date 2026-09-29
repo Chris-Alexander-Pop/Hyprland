@@ -165,18 +165,9 @@ bool LayerPointerHold::isBelowSurface(SP<CWLSurfaceResource> surf) {
     return below && surf && surfaceInTree(below, surf);
 }
 
-bool LayerPointerHold::freezeBlocksAt(const Vector2D& global) {
-    if (!freeze())
-        return false;
-    Vector2D local;
-    if (overlayAt(global, local))
-        return false;
-    return isBelowSurface(surfaceBelowAt(global, local));
-}
-
 void LayerPointerHold::debugLog(const std::string& msg) {
     const char* dir = getenv("XDG_RUNTIME_DIR");
-    const auto  path = std::string{dir && dir[0] ? dir : "/tmp"} + "/screen-shadow-hypr.log";
+    const auto  path = std::string{dir && dir[0] ? dir : "/tmp"} + "/hyprland-layer-hold.log";
     FILE*       f    = fopen(path.c_str(), "a");
     if (!f)
         return;

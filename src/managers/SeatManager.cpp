@@ -543,7 +543,7 @@ void CSeatManager::setPointerFocus(SP<CWLSurfaceResource> surf, const Vector2D& 
         LayerPointerHold::clearBelow();
 
     if (holdOn && LayerPointerHold::layerMapped()) {
-        if (fromLayer && oldSurf)
+        if (oldSurf && (fromLayer || !surf || oldSurf->client() != surf->client()))
             sendPointerLeaveOnClient(oldSurf->client());
         commitPointerFocus(surf, local, true);
         return;
@@ -612,32 +612,28 @@ void CSeatManager::sendPointerMotion(uint32_t timeMs, const Vector2D& local) {
             if (g_pHyprRenderer)
                 g_pHyprRenderer->setCursorFromName("left_ptr", true);
         }
-        if (LayerPointerHold::freezeBlocksAt(global))
-            return;
+        // Freeze: motion only goes to the held layer.
+        return;
     }
 
-    const bool holdMapped = LayerPointerHold::enabled() && LayerPointerHold::layerMapped();
-    const bool skip       = LayerPointerHold::simulated() || LayerPointerHold::noted(global);
+    const bool skip = LayerPointerHold::simulated() || LayerPointerHold::noted(global);
 
-    if (holdMapped) {
+    if (LayerPointerHold::enabled() && LayerPointerHold::layerMapped()) {
         Vector2D olocal;
         if (auto ov = LayerPointerHold::overlayAt(global, olocal)) {
             focusHoldOverlay(ov, olocal);
             sendPointerMotionOnClient(ov->client(), timeMs, olocal);
             sendPointerFrameOnClient(ov->client());
-        } else if (g_holdOverlay) {
-            resetHoldOverlay();
-        }
-
-        if (auto b = LayerPointerHold::below()) {
-            if (skip)
-                return;
-            if (auto bl = LayerPointerHold::belowLocal(global)) {
-                sendPointerMotionOnClient(b->client(), timeMs, *bl);
-                sendPointerFrameOnClient(b->client());
+            if (auto b = LayerPointerHold::below(); b && !skip) {
+                if (auto bl = LayerPointerHold::belowLocal(global)) {
+                    sendPointerMotionOnClient(b->client(), timeMs, *bl);
+                    sendPointerFrameOnClient(b->client());
+                }
             }
+            return;
         }
-        return;
+        if (g_holdOverlay)
+            resetHoldOverlay();
     }
 
     if (!m_state.pointerFocusResource)
@@ -683,60 +679,7 @@ void CSeatManager::sendPointerButton(uint32_t timeMs, uint32_t key, wl_pointer_b
         if (g_holdOverlay)
             resetHoldOverlay();
 
-        Vector2D realLocal;
-        auto     target = LayerPointerHold::surfaceBelowAt(global, realLocal);
-        auto     below  = LayerPointerHold::below();
-        auto     pin    = LayerPointerHold::freezePin();
-        Vector2D pinLocal{};
-        if (below && pin) {
-            if (auto hl = Desktop::View::CWLSurface::fromResource(below)) {
-                if (auto box = hl->getSurfaceBoxGlobal())
-                    pinLocal = *pin - box->pos();
-            }
-        }
-
-        std::string who = "none";
-        if (target) {
-            if (auto hl = Desktop::View::CWLSurface::fromResource(target)) {
-                if (auto win = Desktop::View::CWindow::fromView(hl->view()))
-                    who = std::format("{} {}", win->metadata().appID(), win->metadata().title());
-            }
-        }
-        LayerPointerHold::debugLog(std::format(
-            "button punch state={} cur={:.0f},{:.0f} pin={:.0f},{:.0f} target={} sameClient={}",
-            sc<int>(state_),
-            global.x,
-            global.y,
-            pin ? pin->x : -1,
-            pin ? pin->y : -1,
-            who,
-            below && target && below->client() == target->client()));
-
-        if (!target)
-            return;
-
-        auto sendButtons = [&](wl_client* client) {
-            for (auto const& p : PROTO::seat->m_pointers) {
-                if (!p || !p->m_owner || p->m_owner->client() != client)
-                    continue;
-                p->sendButton(timeMs, key, state_);
-            }
-        };
-
-        LayerPointerHold::beginSimulated();
-        enterAllClientPointers(target, realLocal);
-        sendPointerMotionOnClient(target->client(), timeMs, realLocal);
-        sendButtons(target->client());
-        sendPointerFrameOnClient(target->client());
-        if (below && target->client() != below->client() && state_ == WL_POINTER_BUTTON_STATE_RELEASED) {
-            sendPointerLeaveOnClient(target->client());
-            sendPointerFrameOnClient(target->client());
-        }
-        if (below) {
-            sendPointerMotionOnClient(below->client(), timeMs, pinLocal);
-            sendPointerFrameOnClient(below->client());
-        }
-        LayerPointerHold::endSimulated();
+        LayerPointerHold::debugLog(std::format("button outside layer state={} at {:.0f},{:.0f}", sc<int>(state_), global.x, global.y));
         return;
     }
 
@@ -811,7 +754,8 @@ void CSeatManager::sendPointerFrame(WP<CWLSeatResource> pResource) {
 
 void CSeatManager::sendPointerAxis(uint32_t timeMs, wl_pointer_axis axis, double value, int32_t discrete, int32_t value120, wl_pointer_axis_source source,
                                    wl_pointer_axis_relative_direction relative) {
-    if (LayerPointerHold::freeze()) {
+    const bool freeze = LayerPointerHold::freeze();
+    if (freeze || (LayerPointerHold::enabled() && LayerPointerHold::layerMapped())) {
         const auto global = g_pInputManager->getMouseCoordsInternal();
         Vector2D   olocal;
         if (auto ov = LayerPointerHold::overlayAt(global, olocal)) {
@@ -833,8 +777,11 @@ void CSeatManager::sendPointerAxis(uint32_t timeMs, wl_pointer_axis axis, double
             sendPointerFrameOnClient(ov->client());
             return;
         }
-        if (g_holdOverlay)
-            resetHoldOverlay();
+        if (freeze) {
+            if (g_holdOverlay)
+                resetHoldOverlay();
+            return;
+        }
     }
 
     if (!m_state.pointerFocusResource)

@@ -667,6 +667,10 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus, bool mouse, st
             allowKeyboardRefocus = false;
     }
 
+    // Freeze skips follow_mouse keyboard refocus.
+    if (!refocus && LayerPointerHold::freeze())
+        allowKeyboardRefocus = false;
+
     // set the values for use
     if (refocus) {
         m_foundLSToFocus      = pFoundLayerSurface;
@@ -914,6 +918,12 @@ void CInputManager::processMouseDownNormal(const IPointer::SButtonEvent& e, SP<I
     if (!PASS && !*PPASSMOUSE)
         return;
 
+    // Freeze: buttons are handled on the held-layer path only.
+    if (LayerPointerHold::freeze()) {
+        g_pSeatManager->sendPointerButton(e.timeMs, e.button, e.state);
+        return;
+    }
+
     if (e.state == WL_POINTER_BUTTON_STATE_PRESSED)
         mouseMoveUnified(e.timeMs, false);
 
@@ -947,8 +957,6 @@ void CInputManager::processMouseDownNormal(const IPointer::SButtonEvent& e, SP<I
 
             if ((g_pSeatManager->m_mouse.expired() || !isConstrained()) /* No constraints */
                 && (w && Desktop::focusState()->window() != w) /* window should change */) {
-                if (LayerPointerHold::freeze())
-                    break;
                 Vector2D olocal;
                 if (LayerPointerHold::overlayAt(mouseCoords, olocal))
                     break;

@@ -21,7 +21,6 @@ namespace LayerPointerHold {
     bool        isHeldSurface(SP<CWLSurfaceResource> surf);
     bool        isHeldClient(wl_client* client);
     bool        isBelowSurface(SP<CWLSurfaceResource> surf);
-    bool        freezeBlocksAt(const Vector2D& global);
     void        debugLog(const std::string& msg);
     SP<CWLSurfaceResource> overlayAt(const Vector2D& global, Vector2D& local);
 

@@ -32,7 +32,10 @@ void CScreenshareManager::onOutputCommit(PHLMONITOR monitor) {
             return;
 
         if (frame->m_session->m_type == SHARE_WINDOW) {
-            CBox geometry = frame->m_session->m_window->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+            const auto PWINDOW = frame->m_session->m_window.lock();
+            if (!PWINDOW)
+                return;
+            CBox geometry = PWINDOW->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
             if (geometry.intersection({monitor->m_position, monitor->m_size}).empty())
                 return;
         }

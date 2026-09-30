@@ -132,10 +132,16 @@ void CScreenshareSession::calculateConstraints() {
             m_bufferSize = PMONITOR->m_transformedSize;
             m_name       = PMONITOR->m_name;
             break;
-        case SHARE_WINDOW:
-            m_bufferSize = (m_window->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT) * PMONITOR->m_scale).round();
-            m_name       = m_window->metadata().title();
+        case SHARE_WINDOW: {
+            const auto PWINDOW = m_window.lock();
+            if (!PWINDOW) {
+                stop();
+                return;
+            }
+            m_bufferSize = (PWINDOW->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT) * PMONITOR->m_scale).round();
+            m_name       = PWINDOW->metadata().title();
             break;
+        }
         case SHARE_REGION:
             m_bufferSize = m_captureBox.size();
             m_name       = PMONITOR->m_name;
@@ -178,10 +184,13 @@ Vector2D CScreenshareSession::bufferSize() const {
 }
 
 PHLMONITOR CScreenshareSession::monitor() const {
-    if (m_type == SHARE_WINDOW && m_window.expired())
-        return nullptr;
-    PHLMONITORREF mon = m_type == SHARE_WINDOW ? m_window->m_monitor : m_monitor;
-    return mon.expired() ? nullptr : mon.lock();
+    if (m_type == SHARE_WINDOW) {
+        const auto PWINDOW = m_window.lock();
+        if (!PWINDOW)
+            return nullptr;
+        return PWINDOW->m_monitor.lock();
+    }
+    return m_monitor.lock();
 }
 
 UP<CScreenshareFrame> CScreenshareSession::nextFrame(bool overlayCursor) {

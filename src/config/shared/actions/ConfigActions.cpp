@@ -1238,6 +1238,20 @@ ActionResult Actions::reloadConfig() {
     return {};
 }
 
+ActionResult Actions::loadNormalConfig() {
+    if (!Config::mgr()->configLoaded())
+        return std::unexpected(std::string("Cannot trigger a reload while the config is already loading!"));
+    g_pCompositor->m_safeMode = false;
+    g_pEventLoopManager->doLater([] { Config::mgr()->reload(); });
+    return {};
+}
+
+ActionResult Actions::restartWithoutSafeMode() {
+    if (!g_pCompositor->writeWatchdogFd("normal"))
+        LOG(Log::ERR, "restart without safe mode: no watchdog fd; the session will exit instead of restarting");
+    return exit();
+}
+
 ActionResult Actions::forceRendererReload() {
     bool overAgain = false;
 

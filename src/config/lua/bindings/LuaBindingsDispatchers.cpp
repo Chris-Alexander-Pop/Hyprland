@@ -190,6 +190,14 @@ static int dsp_reload_config(lua_State* L) {
     return Internal::checkResult(L, CA::reloadConfig());
 }
 
+static int dsp_loadNormalConfig(lua_State* L) {
+    return Internal::checkResult(L, CA::loadNormalConfig());
+}
+
+static int dsp_restartNormal(lua_State* L) {
+    return Internal::checkResult(L, CA::restartWithoutSafeMode());
+}
+
 static int dsp_submap(lua_State* L) {
     return Internal::checkResult(L, CA::setSubmap(lua_tostring(L, lua_upvalueindex(1))));
 }
@@ -275,6 +283,16 @@ static int hlExit(lua_State* L) {
 
 static int hlReloadConfig(lua_State* L) {
     lua_pushcclosure(L, dsp_reload_config, 0);
+    return 1;
+}
+
+static int hlLoadNormalConfig(lua_State* L) {
+    lua_pushcclosure(L, dsp_loadNormalConfig, 0);
+    return 1;
+}
+
+static int hlRestartNormal(lua_State* L) {
+    lua_pushcclosure(L, dsp_restartNormal, 0);
     return 1;
 }
 
@@ -1356,6 +1374,8 @@ void Internal::registerDispatcherBindings(lua_State* L) {
         Internal::setFn(L, "exec_raw", hlExecRaw);
         Internal::setFn(L, "exit", hlExit);
         Internal::setFn(L, "reload_config", hlReloadConfig);
+        Internal::setFn(L, "load_normal_config", hlLoadNormalConfig);
+        Internal::setFn(L, "restart_normal", hlRestartNormal);
         Internal::setFn(L, "submap", hlSubmap);
         Internal::setFn(L, "pass", hlPass);
         Internal::setFn(L, "send_shortcut", hlSendShortcut);

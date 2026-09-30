@@ -403,7 +403,7 @@ void CSeatManager::bindPointerFocusResource(SP<CWLSurfaceResource> surf) {
 
 static WP<CWLSurfaceResource> g_holdOverlay;
 
-void CSeatManager::resetHoldOverlay() {
+void                          CSeatManager::resetHoldOverlay() {
     if (auto old = g_holdOverlay.lock()) {
         sendPointerLeaveOnClient(old->client());
         sendPointerFrameOnClient(old->client());

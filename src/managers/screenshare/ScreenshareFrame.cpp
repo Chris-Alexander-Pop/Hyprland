@@ -343,6 +343,8 @@ void CScreenshareFrame::renderWindow(Render::CRenderContext& ctx) {
 
     const auto PWINDOW  = m_session->m_window.lock();
     const auto PMONITOR = m_session->monitor();
+    if (!PWINDOW || !PMONITOR)
+        return;
 
     const auto NOW = Time::steadyNow();
 
@@ -374,10 +376,10 @@ void CScreenshareFrame::renderWindow(Render::CRenderContext& ctx) {
         return;
 
     auto box = pointerSurface->getSurfaceBoxGlobal();
-    if (!box.has_value() || box->intersection(m_session->m_window->getFullWindowBoundingBox()).empty())
+    if (!box.has_value() || box->intersection(PWINDOW->getFullWindowBoundingBox()).empty())
         return;
 
-    if (Desktop::focusState()->window() != m_session->m_window)
+    if (Desktop::focusState()->window() != PWINDOW)
         return;
 
     CRegion fakeDamage = {0, 0, INT16_MAX, INT16_MAX};
@@ -422,7 +424,8 @@ void CScreenshareFrame::render(Render::CRenderContext& ctx) {
     if (PERM == PERMISSION_RULE_ALLOW_MODE_PENDING)
         return;
 
-    bool windowShareDenied = m_session->m_type == SHARE_WINDOW && m_session->m_window->m_ruleApplicator && m_session->m_window->m_ruleApplicator->noScreenShare().valueOrDefault();
+    const auto sharedWindow     = m_session->m_type == SHARE_WINDOW ? m_session->m_window.lock() : nullptr;
+    bool       windowShareDenied = sharedWindow && sharedWindow->m_ruleApplicator && sharedWindow->m_ruleApplicator->noScreenShare().valueOrDefault();
     g_pHyprRenderer->startRenderPass(ctx);
     if (PERM == PERMISSION_RULE_ALLOW_MODE_DENY || windowShareDenied) {
         CBox texbox = CBox{m_bufferSize / 2.F, g_pHyprRenderer->m_screencopyDeniedTexture->m_size}.translate(-g_pHyprRenderer->m_screencopyDeniedTexture->m_size / 2.F);

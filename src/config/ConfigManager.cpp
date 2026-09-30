@@ -1,5 +1,6 @@
 #include "ConfigManager.hpp"
 #include "supplementary/jeremy/Jeremy.hpp"
+#include "../Compositor.hpp"
 #include "lua/ConfigManager.hpp"
 #include "../debug/log/Logger.hpp"
 #include "values/ConfigValues.hpp"
@@ -44,7 +45,7 @@ bool Config::initConfigManager() {
         }
 
         // generate default
-        if (const auto v = g_mgr->generateDefaultConfig(filePath); !v) {
+        if (const auto v = g_mgr->generateDefaultConfig(filePath, g_pCompositor->m_safeMode); !v) {
             LOG(Log::CRIT, "[cfg] Couldn't generate default config: {}", v.error());
             return false;
         }

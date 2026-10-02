@@ -69,7 +69,7 @@ static void detachChildFromLoginTty() {
         return;
     }
 
-    const auto dir = hyprlandCacheDir();
+    const auto      dir = hyprlandCacheDir();
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
     const int fd = open((dir / "early.log").c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
@@ -86,9 +86,9 @@ static void copyNewestHyprlandLog() {
     if (!RUNTIME || RUNTIME[0] == '\0')
         return;
 
-    std::error_code ec;
-    const std::filesystem::path root{std::string{RUNTIME} + "/hypr"};
-    std::filesystem::path newest;
+    std::error_code                 ec;
+    const std::filesystem::path     root{std::string{RUNTIME} + "/hypr"};
+    std::filesystem::path           newest;
     std::filesystem::file_time_type newestTime{};
     for (const auto& ent : std::filesystem::directory_iterator(root, ec)) {
         if (ec)

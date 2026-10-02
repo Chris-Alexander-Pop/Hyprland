@@ -135,8 +135,8 @@ void CCursorshareSession::render() {
     g_pHyprRenderer->m_renderData.transformDamage = false;
     g_pHyprRenderer->setViewport(0, 0, m_bufferSize.x, m_bufferSize.y);
 
-    CBox       sourceBox = m_pendingFrame.sourceBoxCallback();
-    CBox       cursorBox = Pointer::mgr()->getCursorBoxGlobal();
+    CBox sourceBox = m_pendingFrame.sourceBoxCallback();
+    CBox cursorBox = Pointer::mgr()->getCursorBoxGlobal();
     if (auto pin = LayerPointerHold::freezePin()) {
         const auto hot = Pointer::mgr()->hasFreezeCursor() ? Pointer::mgr()->freezeCursorHotspot() : Pointer::mgr()->hotspot();
         cursorBox.x    = pin->x - hot.x;

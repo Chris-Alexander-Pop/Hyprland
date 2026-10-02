@@ -68,7 +68,7 @@ using namespace Hyprutils::String;
 
 CInputManager::CInputManager() {
     m_listeners.setCursorShape = PROTO::cursorShape->m_events.setShape.listen([this](const CCursorShapeProtocol::SSetShapeEvent& event) {
-        const auto reqClient = wl_resource_get_client(event.pMgr->resource());
+        const auto reqClient  = wl_resource_get_client(event.pMgr->resource());
         const bool heldClient = LayerPointerHold::freeze() && LayerPointerHold::isHeldClient(reqClient);
         if (!heldClient) {
             if (!g_pSeatManager->m_state.pointerFocusResource)
@@ -450,8 +450,7 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus, bool mouse, st
     // if we are holding a pointer button,
     // and we're not dnd-ing, don't refocus. Keep focus on last surface.
     if (!overridePos.has_value() && !PROTO::data->dndActive() && !m_currentlyHeldButtons.empty() && Desktop::focusState()->surface() &&
-        Desktop::focusState()->surface()->m_mapped && g_pSeatManager->m_state.pointerFocus && !m_hardInput &&
-        !(LayerPointerHold::enabled() && LayerPointerHold::layerMapped())) {
+        Desktop::focusState()->surface()->m_mapped && g_pSeatManager->m_state.pointerFocus && !m_hardInput && !(LayerPointerHold::enabled() && LayerPointerHold::layerMapped())) {
         foundSurface = g_pSeatManager->m_state.pointerFocus.lock();
 
         // IME popups aren't desktop-like elements

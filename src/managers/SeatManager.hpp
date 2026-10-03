@@ -196,7 +196,9 @@ class CSeatManager {
     void                                    enterAllClientPointers(SP<CWLSurfaceResource> surf, const Vector2D& local);
     void                                    commitPointerFocus(SP<CWLSurfaceResource> surf, const Vector2D& local, bool enter);
     void                                    focusHoldOverlay(SP<CWLSurfaceResource> ov, const Vector2D& local);
-    Vector2D                                pointerLocal() const { return m_lastLocalCoords; }
+    Vector2D                                pointerLocal() const {
+        return m_lastLocalCoords;
+    }
 
     struct {
         CHyprSignalListener newSeatResource;

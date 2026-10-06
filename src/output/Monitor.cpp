@@ -2247,6 +2247,11 @@ bool CMonitor::shouldUseSoftwareCursors() {
     if (*PINVISIBLE != 0)
         return true;
 
+    // The cursor plane on a scanout GPU that is not the render GPU is a second cross-GPU copy.
+    // isMultiGPU() compares allocator fds, and both GPUs share the render allocator, so it stays false here.
+    if (m_output && m_output->getBackend() && m_output->getBackend()->getPrimary())
+        return true;
+
     switch (*PNOHW) {
         case 0: return false;
         case 1: return true;

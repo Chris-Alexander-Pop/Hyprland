@@ -105,7 +105,7 @@ int main(int argc, const char** argv, const char** envp) {
     bool lockedCrash = false;
 
     while (true) {
-        g_instance     = makeUnique<CHyprlandInstance>();
+        g_instance               = makeUnique<CHyprlandInstance>();
         const bool RET           = g_instance->run(safeMode, lockedCrash);
         const bool restartNormal = g_instance->m_restartNormal;
         lockedCrash              = g_instance->m_hyprlandLocked;

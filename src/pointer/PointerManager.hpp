@@ -72,11 +72,11 @@ namespace Pointer {
         bool hasFreezeCursor() const;
         void renderFreezePinFor(PHLMONITOR pMonitor, const Vector2D& globalPin);
         void renderFreezePinAt(PHLMONITOR pMonitor, const Vector2D& localPos);
-        SP<Render::ITexture>     freezeCursorTexture() const;
-        SP<Aquamarine::IBuffer>  freezeCursorBuffer() const;
-        Vector2D                 freezeCursorHotspot() const;
-        Vector2D                 freezeCursorSize() const;
-        std::string              freezeCursorName() const;
+        SP<Render::ITexture>    freezeCursorTexture() const;
+        SP<Aquamarine::IBuffer> freezeCursorBuffer() const;
+        Vector2D                freezeCursorHotspot() const;
+        Vector2D                freezeCursorSize() const;
+        std::string             freezeCursorName() const;
 
         // this is needed e.g. during screensharing where
         // the software cursors aren't locked during the cursor move, but they

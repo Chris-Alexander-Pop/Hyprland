@@ -16,7 +16,10 @@ using namespace Hyprutils::OS;
 
 #define TIMESPEC_NSEC_PER_SEC 1000000000L
 
-static uint64_t LAST_DO_LATER_SEQ = 1;
+static uint64_t              LAST_DO_LATER_SEQ = 1;
+static bool                  s_idleDispatching = false;
+static std::vector<uint64_t> s_cancelledDoLaterSeqs;
+static SP<CEventLoopTimer>   s_idleDeferTimer;
 
 SEventLoopDoLaterLock::SEventLoopDoLaterLock(uint64_t seq_) : seq(seq_) {
     ;
@@ -34,6 +37,10 @@ CEventLoopManager::CEventLoopManager(wl_display* display, wl_event_loop* wlEvent
 }
 
 CEventLoopManager::~CEventLoopManager() {
+    s_idleDeferTimer.reset();
+    s_idleDispatching = false;
+    s_cancelledDoLaterSeqs.clear();
+
     for (auto const& [_, eventSourceData] : m_aqEventSources) {
         wl_event_source_remove(eventSourceData.eventSource);
     }
@@ -213,23 +220,59 @@ void CEventLoopManager::nudgeTimers() {
 }
 
 uint64_t CEventLoopManager::doLater(const std::function<void()>& fn) {
-    const uint64_t NEW_SEQ = ++LAST_DO_LATER_SEQ;
+    const uint64_t NEW_SEQ = fn ? ++LAST_DO_LATER_SEQ : 0;
 
-    m_idle.fns.emplace_back(NEW_SEQ, fn);
+    if (fn)
+        m_idle.fns.emplace_back(NEW_SEQ, fn);
 
-    if (m_idle.eventSource)
+    if (m_idle.fns.empty() || m_idle.eventSource || s_idleDispatching)
         return NEW_SEQ;
 
     m_idle.eventSource = wl_event_loop_add_idle(
         m_wayland.loop,
         [](void* data) {
-            auto IDLE = sc<CEventLoopManager::SIdleData*>(data);
-            auto fns  = std::move(IDLE->fns);
-            IDLE->fns.clear();
+            auto IDLE         = sc<CEventLoopManager::SIdleData*>(data);
             IDLE->eventSource = nullptr;
-            for (auto& f : fns) {
-                if (f.second)
-                    f.second();
+
+            s_idleDispatching = true;
+            s_cancelledDoLaterSeqs.clear();
+
+            constexpr size_t MAX_IDLE_PASSES = 8;
+            for (size_t pass = 0; pass < MAX_IDLE_PASSES && !IDLE->fns.empty(); ++pass) {
+                auto fns = std::move(IDLE->fns);
+                IDLE->fns.clear();
+                for (auto& f : fns) {
+                    if (f.second && !std::ranges::contains(s_cancelledDoLaterSeqs, f.first))
+                        f.second();
+                }
+            }
+
+            s_cancelledDoLaterSeqs.clear();
+            s_idleDispatching = false;
+
+            // Calling wl_event_loop_add_idle from inside wl_event_loop_dispatch_idle keeps
+            // libwayland in its idle while-loop and piles freed sources onto loop->destroy_list
+            // without ever returning to epoll_wait. If callbacks keep re-arming doLater past
+            // MAX_IDLE_PASSES, defer the remaining queue to the next event-loop turn via timerfd.
+            if (!IDLE->fns.empty() && g_pEventLoopManager && !IDLE->eventSource) {
+                if (!s_idleDeferTimer || !s_idleDeferTimer->armed()) {
+                    if (s_idleDeferTimer)
+                        std::erase(g_pEventLoopManager->m_timers.timers, s_idleDeferTimer);
+
+                    s_idleDeferTimer = makeShared<CEventLoopTimer>(
+                        std::chrono::milliseconds(1),
+                        [](SP<CEventLoopTimer> self, void*) {
+                            if (!g_pEventLoopManager)
+                                return;
+                            std::erase(g_pEventLoopManager->m_timers.timers, self);
+                            s_idleDeferTimer.reset();
+                            if (!g_pEventLoopManager->m_idle.fns.empty() && !g_pEventLoopManager->m_idle.eventSource)
+                                g_pEventLoopManager->doLater(nullptr);
+                        },
+                        nullptr);
+                    g_pEventLoopManager->m_timers.timers.emplace_back(s_idleDeferTimer);
+                    g_pEventLoopManager->nudgeTimers();
+                }
             }
         },
         &m_idle);
@@ -239,6 +282,8 @@ uint64_t CEventLoopManager::doLater(const std::function<void()>& fn) {
 
 void CEventLoopManager::removeDoLater(uint64_t seq) {
     std::erase_if(m_idle.fns, [&seq](const auto& e) { return e.first == seq; });
+    if (s_idleDispatching)
+        s_cancelledDoLaterSeqs.push_back(seq);
 
     if (m_idle.fns.empty() && m_idle.eventSource) {
         wl_event_source_remove(m_idle.eventSource);

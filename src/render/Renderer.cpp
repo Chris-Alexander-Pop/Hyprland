@@ -1761,6 +1761,14 @@ bool IHyprRenderer::beginRender(PHLMONITOR pMonitor, CRegion& damage, eRenderMod
     m_renderMode          = mode;
     m_renderData.pMonitor = pMonitor;
 
+    bool        renderSucceeded = false;
+    CScopeGuard failGuard([this, &renderSucceeded] {
+        if (renderSucceeded)
+            return;
+        m_renderData.pMonitor.reset();
+        m_currentBuffer.reset();
+    });
+
     if (simple) {
         m_renderData.fbSize = fb ? fb->m_size : buffer->m_texture->m_size;
         setProjectionType(RPT_EXPORT);
@@ -1773,8 +1781,10 @@ bool IHyprRenderer::beginRender(PHLMONITOR pMonitor, CRegion& damage, eRenderMod
     if (HAS_MIRROR_FB && !RESOURCES->shouldKeepMirrorFB())
         RESOURCES->releaseMirrorFB();
 
-    if (m_renderMode == RENDER_MODE_FULL_FAKE)
-        return beginFullFakeRenderInternal(pMonitor, damage, fb, simple);
+    if (m_renderMode == RENDER_MODE_FULL_FAKE) {
+        renderSucceeded = beginFullFakeRenderInternal(pMonitor, damage, fb, simple);
+        return renderSucceeded;
+    }
 
     int bufferAge = 0;
 
@@ -1823,6 +1833,7 @@ bool IHyprRenderer::beginRender(PHLMONITOR pMonitor, CRegion& damage, eRenderMod
             transaction->commit();
     }
 
+    renderSucceeded = true;
     return true;
 }
 
@@ -2122,6 +2133,9 @@ void IHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
 
     if (Animation::mgr())
         Animation::mgr()->frameTick();
+
+    if (!pMonitor->m_enabled || !pMonitor->m_output || !pMonitor->m_output->state->state().enabled)
+        return;
 
     {
         static bool once = true;

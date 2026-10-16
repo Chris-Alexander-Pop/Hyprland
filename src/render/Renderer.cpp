@@ -2308,6 +2308,9 @@ void IHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
     if (Animation::mgr())
         Animation::mgr()->frameTick();
 
+    if (!pMonitor->m_enabled || !pMonitor->m_output || !pMonitor->m_output->state->state().enabled)
+        return;
+
     {
         static bool once = true;
         if (once) {
@@ -2485,8 +2488,8 @@ void IHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
     if (auto pin = LayerPointerHold::freezePin(); LayerPointerHold::freeze() && pin) {
         TRACY_GPU_ZONE("RenderFreezePinCursor");
         Pointer::mgr()->renderFreezePinFor(pMonitor->m_self.lock(), *pin);
-        Pointer::mgr()->includeFreezePinDamage(pMonitor->m_self.lock(), m_renderData.damage, *pin);
-        Pointer::mgr()->includeFreezePinDamage(pMonitor->m_self.lock(), m_renderData.finalDamage, *pin);
+        Pointer::mgr()->includeFreezePinDamage(pMonitor->m_self.lock(), ctx.m_data.damage, *pin);
+        Pointer::mgr()->includeFreezePinDamage(pMonitor->m_self.lock(), ctx.m_data.finalDamage, *pin);
     }
 
     if (renderCursor && !(LayerPointerHold::freeze() && pMonitor->needsACopyFB())) {

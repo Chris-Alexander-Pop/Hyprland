@@ -378,7 +378,7 @@ void CScreenshareFrame::render() {
     if (PERM == PERMISSION_RULE_ALLOW_MODE_PENDING)
         return;
 
-    const auto sharedWindow    = m_session->m_type == SHARE_WINDOW ? m_session->m_window.lock() : nullptr;
+    const auto sharedWindow      = m_session->m_type == SHARE_WINDOW ? m_session->m_window.lock() : nullptr;
     bool       windowShareDenied = sharedWindow && sharedWindow->m_ruleApplicator && sharedWindow->m_ruleApplicator->noScreenShare().valueOrDefault();
     g_pHyprRenderer->startRenderPass();
     if (PERM == PERMISSION_RULE_ALLOW_MODE_DENY || windowShareDenied) {

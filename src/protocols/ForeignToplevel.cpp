@@ -180,7 +180,7 @@ void CForeignToplevelProtocol::destroyHandle(CForeignToplevelHandle* handle) {
 }
 
 bool CForeignToplevelProtocol::windowValidForForeign(PHLWINDOW pWindow) {
-    return validMapped(pWindow) && !pWindow->backend().traits().overrideRedirect;
+    return validMapped(pWindow) && !pWindow->backend().traits().overrideRedirect && !pWindow->backend().isReservation();
 }
 
 PHLWINDOW CForeignToplevelProtocol::windowFromHandleResource(wl_resource* res) {

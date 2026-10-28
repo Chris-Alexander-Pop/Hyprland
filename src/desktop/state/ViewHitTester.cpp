@@ -272,6 +272,11 @@ SP<CWLSurfaceResource> CViewHitTester::windowSurfaceAt(const Vector2D& pos, PHLW
 
     RASSERT(!window->backend().isX11(), "Cannot call windowSurfaceAt on an X11 window!");
 
+    // Launch reservations are mapped tiles with no client surface.
+    const auto RESOURCE = window->resource();
+    if (!RESOURCE)
+        return nullptr;
+
     // try popups first
     const auto PPOPUP = window->popupHead()->at(pos);
 
@@ -281,7 +286,7 @@ SP<CWLSurfaceResource> CViewHitTester::windowSurfaceAt(const Vector2D& pos, PHLW
         return PPOPUP->wlSurface()->resource();
     }
 
-    auto [surf, local] = window->wlSurface()->resource()->at(pos - window->position(Desktop::View::IGeometric::GEOMETRIC_GOAL), true);
+    auto [surf, local] = RESOURCE->at(pos - window->position(Desktop::View::IGeometric::GEOMETRIC_GOAL), true);
     if (surf) {
         surfaceLocal = local;
         return surf;
@@ -301,9 +306,13 @@ Vector2D CViewHitTester::surfaceLocalAt(const Vector2D& pos, PHLWINDOW window, S
     if (PPOPUP)
         return pos - PPOPUP->coordsGlobal();
 
+    const auto RESOURCE = window->resource();
+    if (!RESOURCE)
+        return pos - window->position(Desktop::View::IGeometric::GEOMETRIC_GOAL);
+
     std::tuple<SP<CWLSurfaceResource>, Vector2D> iterData = {surface, {-1337, -1337}};
 
-    window->wlSurface()->resource()->breadthfirst(
+    RESOURCE->breadthfirst(
         [](SP<CWLSurfaceResource> surf, const Vector2D& offset, void* data) {
             const auto PDATA = sc<std::tuple<SP<CWLSurfaceResource>, Vector2D>*>(data);
             if (surf == std::get<0>(*PDATA))

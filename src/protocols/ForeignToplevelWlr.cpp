@@ -406,5 +406,5 @@ PHLWINDOW CForeignToplevelWlrProtocol::windowFromHandleResource(wl_resource* res
 }
 
 bool CForeignToplevelWlrProtocol::windowValidForForeign(PHLWINDOW pWindow) {
-    return validMapped(pWindow) && !pWindow->backend().traits().overrideRedirect;
+    return validMapped(pWindow) && !pWindow->backend().traits().overrideRedirect && !pWindow->backend().isReservation();
 }

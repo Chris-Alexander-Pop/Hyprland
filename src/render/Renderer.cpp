@@ -779,8 +779,18 @@ void IHyprRenderer::renderWindow(CRenderContext& ctx, PHLWINDOW pWindow, PHLMONI
         }
 
         renderdata.surfaceCounter = 0;
-        pWindow->wlSurface()->resource()->breadthfirst(
-            [&ctx, &renderdata, &pWindow](SP<CWLSurfaceResource> s, const Vector2D& offset, void* data) {
+        if (!pWindow->wlSurface()->resource()) {
+            CBox wb = {renderdata.pos.x - pMonitor->m_position.x, renderdata.pos.y - pMonitor->m_position.y, renderdata.w, renderdata.h};
+            wb.scale(pMonitor->m_scale).round();
+            CRectPassElement::SRectData data;
+            data.color         = CHyprColor(1.F, 1.F, 1.F, 0.045F * fullAlpha);
+            data.box           = wb;
+            data.round         = renderdata.dontRound ? 0 : std::max(renderdata.rounding - 1, 0);
+            data.roundingPower = renderdata.roundingPower;
+            addPassElement(ctx, makeUnique<CRectPassElement>(data));
+        } else
+            pWindow->wlSurface()->resource()->breadthfirst(
+                [&ctx, &renderdata, &pWindow](SP<CWLSurfaceResource> s, const Vector2D& offset, void* data) {
                 if (!s->m_current.texture)
                     return;
 

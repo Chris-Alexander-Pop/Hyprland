@@ -62,7 +62,7 @@ PHLWINDOW CWindowSwallowController::findCandidate() const {
             break;
 
         for (const auto& w : Desktop::windowState()->windows()) {
-            if (!w->mapped() || !w->acceptsInput())
+            if (!w->mapped() || !w->acceptsInput() || w->backend().isReservation())
                 continue;
 
             if (w->backend().pid() == currentPid)

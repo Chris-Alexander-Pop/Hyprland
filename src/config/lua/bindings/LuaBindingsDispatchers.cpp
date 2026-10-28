@@ -186,14 +186,15 @@ static int dsp_execCmd(lua_State* L) {
 
     std::optional<uint64_t> pid;
     auto                    ruleRet = Internal::buildRuleFromTable(L, lua_upvalueindex(2));
+    const bool              reserve = lua_toboolean(L, lua_upvalueindex(3));
 
     if (!ruleRet)
         return ruleRet.error();
 
     if (*ruleRet)
-        pid = Config::Supplementary::executor()->spawn(Config::Supplementary::SExecRequest{.exec = proc, .rule = std::move(*ruleRet)});
+        pid = Config::Supplementary::executor()->spawn(Config::Supplementary::SExecRequest{.exec = proc, .rule = std::move(*ruleRet), .reserve = reserve});
     else
-        pid = Config::Supplementary::executor()->spawn(proc);
+        pid = Config::Supplementary::executor()->spawn(Config::Supplementary::SExecRequest{.exec = proc, .withRules = true, .reserve = reserve});
 
     if (!pid.has_value())
         return Internal::dispatcherError(L, "Failed to start process", ERR, C_EXECFAIL);
@@ -282,7 +283,23 @@ static int hlExecCmd(lua_State* L) {
     if (!proc)
         return Internal::configError(L, std::format("exec_cmd: bad argument 1: {}", proc.error()));
 
-    const bool hasRuleArg = !lua_isnoneornil(L, 2);
+    bool hasRuleArg = !lua_isnoneornil(L, 2);
+    bool       reserve    = false;
+
+    // { reserve = true } holds a tile for this launch. It is not a window rule.
+    if (hasRuleArg && lua_istable(L, 2)) {
+        lua_getfield(L, 2, "reserve");
+        reserve = lua_toboolean(L, -1);
+        lua_pop(L, 1);
+        lua_pushnil(L);
+        lua_setfield(L, 2, "reserve");
+
+        lua_pushnil(L);
+        if (lua_next(L, 2) == 0)
+            hasRuleArg = false;
+        else
+            lua_pop(L, 2);
+    }
 
     lua_pushstring(L, proc->c_str());
 
@@ -291,7 +308,8 @@ static int hlExecCmd(lua_State* L) {
     else
         lua_pushnil(L);
 
-    lua_pushcclosure(L, dsp_execCmd, 2);
+    lua_pushboolean(L, reserve);
+    lua_pushcclosure(L, dsp_execCmd, 3);
     return 1;
 }
 

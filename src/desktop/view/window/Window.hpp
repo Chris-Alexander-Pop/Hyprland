@@ -269,6 +269,8 @@ namespace Desktop::View {
         SP<Layout::ITarget> layoutTarget() const;
         bool                isFloating() const;
         void                sendClose();
+        // Placeholder launch tiles leave the layout node in place for the real window.
+        void                dropLaunchReservation();
         void                requestClientFullscreen(const SClientFullscreenRequest& request);
 
         CBox                getWindowMainSurfaceBox() const {

@@ -65,6 +65,7 @@
 #include "../../../layout/space/Space.hpp"
 #include "../../../layout/LayoutManager.hpp"
 #include "../../../layout/target/WindowTarget.hpp"
+#include "LaunchReservation.hpp"
 #include "../../../layout/target/WindowGroupTarget.hpp"
 #include "../../../output/MonitorWindowTransaction.hpp"
 #include "../../../event/EventBus.hpp"
@@ -394,7 +395,7 @@ void CWindow::updateToplevel() {
 }
 
 void CWindow::updateSurfaceScaleTransformDetails(bool force) {
-    if (!m_isMapped || m_hidden)
+    if (!m_isMapped || m_hidden || !m_wlSurface->resource())
         return;
 
     const auto PLASTMONITOR = State::monitorState()->query().id(m_lastSurfaceMonitorID).run();
@@ -601,7 +602,8 @@ void CWindow::onMap() {
     if (m_backend->isX11())
         return;
 
-    setSubsurfaceHead(CSubsurface::create(m_self.lock()));
+    if (m_wlSurface->resource())
+        setSubsurfaceHead(CSubsurface::create(m_self.lock()));
     setPopupHead(CPopup::create(m_self.lock()));
 }
 
@@ -1430,13 +1432,19 @@ void CWindow::mapWindow() {
 
     syncInitialWorkspaceToken(m_workspace);
 
+    if (m_backend->isReservation())
+        m_target->setFloatingInitial(false);
+
     m_swallowing->reserveCandidate();
 
     // emit the IPC event before the layout might focus the window to avoid a focus event first
-    IPC::Socket2::sock()->postEvent({"openwindow", std::format("{:x},{},{},{}", m_self.lock(), PWORKSPACE->addressableName(), m_metadata->appID(), m_metadata->title())});
+    if (!m_backend->isReservation())
+        IPC::Socket2::sock()->postEvent({"openwindow", std::format("{:x},{},{},{}", m_self.lock(), PWORKSPACE->addressableName(), m_metadata->appID(), m_metadata->title())});
     Event::bus()->m_events.window.openEarly.emit(m_self.lock());
 
-    if (m_swallowing->activate()) {
+    if (Desktop::View::launchReservations().claim(m_self.lock())) {
+        ;
+    } else if (m_swallowing->activate()) {
         ;
     } else if (*PAUTOGROUP                                                                          // auto_group enabled
                && Desktop::focusState()->window()                                                   // focused window exists
@@ -1493,7 +1501,7 @@ void CWindow::mapWindow() {
     // check LS focus grab
     const auto PFORCEFOCUS  = Desktop::viewState()->query().forceFocus().runWindow();
     const auto PLSFROMFOCUS = Desktop::viewState()->query().type(VIEW_TYPE_LAYER_SURFACE).surface(Desktop::focusState()->surface()).runLayer();
-    if (PLSFROMFOCUS && PLSFROMFOCUS->m_layerSurface->m_current.keyboardInteractivity != ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE)
+    if (PLSFROMFOCUS && PLSFROMFOCUS->m_layerSurface->m_current.keyboardInteractivity != ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE && !m_backend->isReservation())
         m_state |= WINDOW_STATE_NO_INITIAL_FOCUS;
 
     // emit the hook event here after basic stuff has been initialized
@@ -1639,7 +1647,7 @@ void CWindow::unmapWindow() {
     const auto  CURRENT_WINDOW_FS_MODES   = Fullscreen::controller()->getFullscreenModes(m_self.lock());
     const bool  CURRENT_FS_LAYOUT_HANDLED = IS_CURRENT_WINDOW_FS ? Fullscreen::controller()->layoutManagedFS(m_self.lock()) : false;
     const bool  WAS_FOCUSED               = m_self.lock() == Desktop::focusState()->window();
-    if (!wlSurface()->exists() || !m_isMapped) {
+    if (!m_isMapped || (!m_backend->isReservation() && !wlSurface()->exists())) {
         LOG(Log::WARN, "{} unmapped without being mapped??", m_self.lock());
         return;
     }
@@ -1669,7 +1677,8 @@ void CWindow::unmapWindow() {
 
     // Null-buffer commits captured before the old surface state was replaced;
     // destroy-based unmaps can still capture the image here.
-    captureCloseSnapshots();
+    if (!m_backend->isReservation())
+        captureCloseSnapshots();
     const auto SNAPSHOTS = std::exchange(m_closeSnapshots, std::nullopt);
 
     bool       wasLastWindow = WAS_FOCUSED;
@@ -2008,6 +2017,21 @@ CWindowStateEventTracker& CWindow::stateTracker() {
 void CWindow::sendClose() {
     if (m_isMapped)
         m_backend->close();
+}
+
+void CWindow::dropLaunchReservation() {
+    m_isMapped = false;
+
+    if (Desktop::focusState()->window() == m_self.lock())
+        Desktop::focusState()->resetWindowFocus();
+
+    Event::bus()->m_events.window.close.emit(m_self.lock());
+
+    if (m_workspace)
+        m_workspace->updateWindows();
+
+    m_workspace.reset();
+    Desktop::windowState()->removeSafe(m_self.lock());
 }
 
 Types::CMultiAVarContainer<float, uint8_t>& CWindow::alpha() {

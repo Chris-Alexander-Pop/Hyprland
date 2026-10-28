@@ -63,6 +63,9 @@ namespace Layout {
         virtual void                                                setPseudoSize(const Vector2D& size);
         virtual Vector2D                                            pseudoSize();
         virtual void                                                swap(SP<ITarget> b);
+        // Move this target's layout slot onto another target without inserting a new node.
+        void                                                        givePlacementTo(SP<ITarget> incoming);
+        void                                                        releaseSpace();
 
         virtual bool                                                floating()          = 0;
         virtual void                                                setFloating(bool x) = 0;

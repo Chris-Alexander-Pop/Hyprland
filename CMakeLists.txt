@@ -713,6 +713,13 @@ install(
   PATTERN "*.hpp"
   PATTERN "*.inc")
 
+# Headers are in place. Rebuild plugins that pin this commit. DESTDIR package
+# builds skip the script.
+install(CODE "execute_process(COMMAND ${CMAKE_SOURCE_DIR}/scripts/after-install.sh RESULT_VARIABLE _hypr_after)
+if(NOT _hypr_after EQUAL 0)
+  message(FATAL_ERROR \"Hyprland is installed, but a dependent plugin rebuild failed (exit \${_hypr_after}). See the output above.\")
+endif()")
+
 if(BUILD_TESTING)
   message(STATUS "Building tests")
 

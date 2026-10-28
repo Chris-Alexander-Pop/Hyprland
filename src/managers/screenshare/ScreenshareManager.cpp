@@ -214,6 +214,14 @@ bool CScreenshareManager::outputNeedsCopyFB(PHLMONITOR monitor) {
     return outputCopyFBState(monitor).needsCopyFB();
 }
 
+bool CScreenshareManager::hasPendingWindowFrame(PHLMONITOR monitor) {
+    return std::ranges::any_of(m_pendingFrames, [&](const WP<CScreenshareFrame>& frame) {
+        if (!frame || frame->done() || !frame->m_shared || frame->m_session.expired())
+            return false;
+        return frame->m_session->m_type == SHARE_WINDOW && frame->m_session->monitor() == monitor;
+    });
+}
+
 CScreenshareManager::SOutputCopyFBState CScreenshareManager::outputCopyFBState(PHLMONITOR monitor) {
     SOutputCopyFBState state;
 
@@ -282,4 +290,32 @@ bool CScreenshareManager::needsWorkspaceCaptureSnapshot(PHLWINDOW window) const 
 
 CScreenshareManager::SManagedSession::SManagedSession(UP<CScreenshareSession>&& session) : m_session(std::move(session)) {
     ;
+}
+
+SP<Render::IFramebuffer> CScreenshareManager::acquireShmReadback(int width, int height, DRMFormat format) {
+    if (width <= 0 || height <= 0 || !g_pHyprRenderer)
+        return nullptr;
+
+    constexpr size_t READBACK_CAP = 8;
+
+    const auto exact = std::ranges::find_if(m_shmReadback, [&](const SShmReadback& slot) {
+        return slot.width == width && slot.height == height && slot.format == format && slot.fb && slot.fb.strongRef() == 1 && slot.fb->isAllocated();
+    });
+    if (exact != m_shmReadback.end())
+        return exact->fb;
+
+    if (m_shmReadback.size() >= READBACK_CAP) {
+        const auto idle = std::ranges::find_if(m_shmReadback, [](const SShmReadback& slot) { return !slot.fb || slot.fb.strongRef() == 1; });
+        if (idle != m_shmReadback.end())
+            m_shmReadback.erase(idle);
+    }
+
+    auto fb = g_pHyprRenderer->createFB("screenshare shm");
+    if (!fb || !fb->alloc(width, height, format))
+        return nullptr;
+
+    if (m_shmReadback.size() < READBACK_CAP)
+        m_shmReadback.push_back(SShmReadback{.width = width, .height = height, .format = format, .fb = fb});
+
+    return fb;
 }

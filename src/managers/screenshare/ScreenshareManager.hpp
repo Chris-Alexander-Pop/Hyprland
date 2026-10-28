@@ -226,8 +226,11 @@ namespace Screenshare {
             uint32_t pendingMonitorFrames = 0;
             uint32_t pendingRegionFrames  = 0;
 
+            // Monitor and region shares only. A window snap draws the window
+            // itself, so it must not allocate the monitor mirror. The commit
+            // path still copies it via hasPendingWindowFrame().
             bool     needsCopyFB() const {
-                return pendingFrames > 0;
+                return pendingMonitorFrames > 0 || pendingRegionFrames > 0;
             }
         };
 
@@ -244,6 +247,7 @@ namespace Screenshare {
         UP<CCursorshareSession> newCursorSession(wl_client* client, WP<CWLPointerResource> pointer);
 
         void                    onOutputCommit(PHLMONITOR monitor, bool copyFBPrepared = true);
+        bool                    hasPendingWindowFrame(PHLMONITOR monitor);
         bool                    isOutputBeingSSd(PHLMONITOR monitor);
         bool                    isOutputDSBlocked(PHLMONITOR monitor);
         bool                    outputNeedsCopyFB(PHLMONITOR monitor);
@@ -254,6 +258,19 @@ namespace Screenshare {
         std::vector<WP<CScreenshareSession>> m_sessions;
         std::vector<WP<CCursorshareSession>> m_cursorSessions;
         std::vector<WP<CScreenshareFrame>>   m_pendingFrames;
+
+        // Readback targets for shm copies, keyed by size and format. Resizing one
+        // with glTexImage2D orphans the old storage on NVIDIA, so a miss drops an
+        // idle slot instead of reallocating it.
+        struct SShmReadback {
+            int                      width  = 0;
+            int                      height = 0;
+            DRMFormat                format = 0;
+            SP<Render::IFramebuffer> fb;
+        };
+
+        std::vector<SShmReadback>    m_shmReadback;
+        SP<Render::IFramebuffer>     acquireShmReadback(int width, int height, DRMFormat format);
 
         struct SManagedSession {
             SManagedSession(UP<CScreenshareSession>&& session);
@@ -266,6 +283,7 @@ namespace Screenshare {
         WP<CScreenshareSession> getManagedSession(eScreenshareType type, wl_client* client, PHLMONITOR monitor, PHLWINDOW window, SP<CWorkspaceCaptureSource> ws, CBox captureBox);
 
         friend class CScreenshareSession;
+        friend class CScreenshareFrame;
     };
 
     inline UP<CScreenshareManager>& mgr() {

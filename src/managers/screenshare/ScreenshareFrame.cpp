@@ -524,11 +524,15 @@ bool CScreenshareFrame::copyShm() {
         return false;
     }
 
-    if (!m_session->m_shmFB)
-        m_session->m_shmFB = g_pHyprRenderer->createFB("screenshare shm");
-    auto outFB = m_session->m_shmFB;
-    if (!outFB || !outFB->alloc(m_bufferSize.x, m_bufferSize.y, shm.format))
+    auto& screenshare = Screenshare::mgr();
+    if (!screenshare)
         return false;
+
+    auto outFB = screenshare->acquireShmReadback(static_cast<int>(m_bufferSize.x), static_cast<int>(m_bufferSize.y), shm.format);
+    if (!outFB) {
+        LOG(Log::ERR, "Can't copy: failed to allocate the shm readback");
+        return false;
+    }
     outFB->setImageDescription(NColorManagement::DEFAULT_SRGB_IMAGE_DESCRIPTION);
 
     if (!beginCopy(outFB)) {

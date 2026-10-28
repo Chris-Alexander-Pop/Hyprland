@@ -193,7 +193,10 @@ void COutputCommitCoordinator::submitted(SFrame& frame, bool async) {
     if (!async && frame.kind == FRAME_COMPOSED)
         m_monitor->m_directScanoutIsActive = false;
 
-    if (!async && frame.kind == FRAME_COMPOSED && Screenshare::mgr())
+    // Window export does not prepare a monitor mirror, but the copy still has to
+    // run on this commit. Monitor and region shares keep going through copyFBPrepared.
+    if (!async && frame.kind == FRAME_COMPOSED && Screenshare::mgr() &&
+        (frame.copyFBPrepared || Screenshare::mgr()->hasPendingWindowFrame(m_monitor->m_self.lock())))
         Screenshare::mgr()->onOutputCommit(m_monitor->m_self.lock(), frame.copyFBPrepared);
 }
 
@@ -201,7 +204,8 @@ void COutputCommitCoordinator::onPresented(uint64_t id, bool presented) {
     if (!ownsCommit(id))
         return;
 
-    if (presented && m_pending->kind == FRAME_COMPOSED && Screenshare::mgr())
+    if (presented && m_pending->kind == FRAME_COMPOSED && Screenshare::mgr() &&
+        (m_pending->copyFBPrepared || Screenshare::mgr()->hasPendingWindowFrame(m_monitor->m_self.lock())))
         Screenshare::mgr()->onOutputCommit(m_monitor->m_self.lock(), m_pending->copyFBPrepared);
 
     if (!presented) {

@@ -52,12 +52,12 @@ std::string LayerPointerHold::targetNamespace() {
 }
 
 bool LayerPointerHold::enabled() {
-    static auto PHOLD = CConfigValue<Hyprlang::INT>("misc:layer_hold_pointer");
+    static auto PHOLD = CConfigValue<Config::INTEGER>("misc:layer_hold_pointer");
     return *PHOLD && !nsEmpty(targetNamespace());
 }
 
 bool LayerPointerHold::freeze() {
-    static auto PFREEZE = CConfigValue<Hyprlang::INT>("misc:layer_hold_freeze");
+    static auto PFREEZE = CConfigValue<Config::INTEGER>("misc:layer_hold_freeze");
     return enabled() && *PFREEZE;
 }
 

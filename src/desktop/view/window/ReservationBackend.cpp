@@ -110,6 +110,10 @@ Vector2D CReservationBackend::bufferToSurfaceLocal(const Vector2D& buffer) const
     return buffer;
 }
 
+Vector2D CReservationBackend::globalToBuffer(const Vector2D& pos, const Vector2D& origin) const {
+    return pos - origin;
+}
+
 void CReservationBackend::configure(const CBox& logicalBox, PHLMONITOR, bool) {
     if (logicalBox.w > 2 && logicalBox.h > 2)
         m_reportedSize = logicalBox.size();

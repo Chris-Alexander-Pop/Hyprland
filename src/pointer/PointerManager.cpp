@@ -698,7 +698,7 @@ SP<Aquamarine::IBuffer> CPointerManager::renderHWCursorBuffer(SP<CPointerManager
 
     auto RBO = g_pHyprRenderer->getOrCreateRenderbuffer(buf, state->monitor->m_cursorSwapchain->currentOptions().format);
     if (!RBO) {
-        g_pHyprRenderer->m_renderData.pMonitor.reset();
+        g_pHyprRenderer->context().m_data.pMonitor.reset();
         LOG(Log::TRACE, "Failed to create cursor RB with format {}, mod {}", buf->dmabuf().format, buf->dmabuf().modifier);
         return nullptr;
     }
@@ -810,7 +810,7 @@ void CPointerManager::renderSoftwareCursorImmediate(PHLMONITOR pMonitor, std::op
     box.y = std::round(box.y);
 
     if (Render::GL::g_pHyprOpenGL)
-        Render::GL::g_pHyprOpenGL->renderTexturePrimitive(texture, box.round());
+        Render::GL::g_pHyprOpenGL->renderTexturePrimitive(g_pHyprRenderer->context(), texture, box.round());
 
     state->swRendered    = true;
     state->swRenderedBox = overridePos.has_value() ? CBox{*overridePos - m_currentCursorImage.hotspot, cursorSizeLogical()} : state->box;
@@ -917,7 +917,7 @@ void CPointerManager::renderFreezePinAt(PHLMONITOR pMonitor, const Vector2D& loc
     box.x = std::round(box.x);
     box.y = std::round(box.y);
 
-    g_pHyprRenderer->m_renderPass.add(makeUnique<CTexPassElement>(CTexPassElement::SRenderData{
+    g_pHyprRenderer->addPassElement(g_pHyprRenderer->context(), makeUnique<CTexPassElement>(CTexPassElement::SRenderData{
         .tex = m_freezeCursor.tex,
         .box = box.round(),
     }));

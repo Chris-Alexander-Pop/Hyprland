@@ -1780,7 +1780,9 @@ void CWindow::unmapWindow() {
     m_realSize->setConfig(Config::animationTree()->getAnimationPropertyConfig("windowsOut"));
     m_presentation->alpha(WINDOW_ALPHA_FADE)->setConfig(Config::animationTree()->getAnimationPropertyConfig("fadeOut"));
 
-    Desktop::fadingOutState()->add(CWindowFadeout::create(m_self.lock(), SNAPSHOTS->monitor, FADEOUTALPHA, SNAPSHOTS->workspace));
+    // Reservations skip captureCloseSnapshots(); empty optional must not abort.
+    if (SNAPSHOTS)
+        Desktop::fadingOutState()->add(CWindowFadeout::create(m_self.lock(), SNAPSHOTS->monitor, FADEOUTALPHA, SNAPSHOTS->workspace));
 
     // recheck idle inhibitors
     g_pInputManager->recheckIdleInhibitorStatus();

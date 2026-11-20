@@ -12,6 +12,7 @@ This branch tracks [hyprwm/Hyprland](https://github.com/hyprwm/Hyprland) `main` 
 | `dmabuf: keep renderer formats on hybrid render/scanout` | `quirks:skip_non_kms_dmabuf_formats` must not intersect the composition tranche with KMS formats when the render GPU is not the scanout GPU (NVIDIA render, Intel eDP). Scanout tranches still advertise the output's KMS device. |
 | `output: draw the cursor into the frame on a multi-GPU monitor` | An output whose DRM backend has a primary GPU always uses a software cursor. The cursor plane on the scanout GPU would be a second cross-GPU copy. |
 | `render/eventloop: clear render monitor on failed beginRender and bound doLater idle dispatch` | `Animation::mgr()->frameTick()` can disable an output via `fadeDpms`'s `onEnd` callback mid-`renderMonitor()`, clearing a multi-GPU swapchain before `beginRender()` acquires a buffer. Reset `m_renderData.pMonitor` on `beginRender()` / `renderHWCursorBuffer()` failure, bail out of `renderMonitor()` if `frameTick()` disabled the output, and bound re-entrant `doLater()` passes per `wl_event_loop_dispatch_idle()` turn so self-rescheduling idle callbacks cannot trap libwayland and leak `wl_event_source_idle` allocations onto `loop->destroy_list`. |
+| `window: skip fadeout when close snapshots were never captured` | `unmapWindow` skipped `captureCloseSnapshots` for launch reservations, then dereferenced empty `m_closeSnapshots` and aborted. Guard the fadeout create. |
 
 ## Updating from upstream
 

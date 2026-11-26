@@ -17,6 +17,7 @@ namespace Config::Supplementary {
         REFRESH_CURSOR_ZOOMS       = (1 << 7),
         REFRESH_CONFIG_WATCHER     = (1 << 8),
         REFRESH_GRADIENTS_GROUPBAR = (1 << 9),
+        REFRESH_LAYER_HOLD_FREEZE  = (1 << 10),
 
         REFRESH_ALL = std::numeric_limits<std::underlying_type_t<ePropRefreshProp>>::max(),
     };

@@ -162,6 +162,8 @@ namespace Screenshare {
         void render(Render::CRenderContext& ctx);
         void calculateConstraints();
 
+        SP<Render::IFramebuffer> m_copyFB;
+
         friend class CScreenshareFrame;
         friend class CScreenshareManager;
     };

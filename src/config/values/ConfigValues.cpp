@@ -588,6 +588,12 @@ std::vector<SP<IValue>> Values::getConfigValues() {
         MS<Bool>("misc:always_follow_on_dnd", "Will make mouse focus follow the mouse when drag and dropping.", true),
         MS<Bool>("misc:layers_hog_keyboard_focus", "If true, will make keyboard-interactive layers keep their focus on mouse move.", true,
                  {.deprecationNotice = "Moved to layers category. Use layers:layers_hog_keyboard_focus instead."}),
+        MS<Bool>("misc:layer_hold_pointer", "Keep the last client's pointer enter when the cursor is over layer_hold_pointer_namespace.", false),
+        MS<String>("misc:layer_hold_pointer_namespace", "Layer-shell namespace that holds the client pointer. Empty disables.", STRVAL_EMPTY),
+        MS<Bool>("misc:layer_hold_freeze",
+                 "While layer_hold_pointer is on, pointer events go only to the held layer. Other surfaces are not entered, and follow_mouse does not move keyboard focus. "
+                 "Restore the cursor position when unset.",
+                 false, {.refresh = Supplementary::REFRESH_LAYER_HOLD_FREEZE}),
         MS<Bool>("misc:animate_manual_resizes", "If true, will animate manual window resizes/moves", false),
         MS<Bool>("misc:animate_mouse_windowdragging", "If true, will animate windows being dragged by mouse.", false),
         MS<Bool>("misc:disable_autoreload", "If true, the config will not reload automatically on save.", false, {.refresh = Supplementary::REFRESH_CONFIG_WATCHER}),

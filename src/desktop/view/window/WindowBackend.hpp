@@ -103,6 +103,9 @@ namespace Desktop::View {
         virtual bool                   isMapped() const = 0;
         virtual eBackendType           type() const     = 0;
         bool                           isX11() const;
+        virtual bool                   isReservation() const {
+            return false;
+        }
         virtual pid_t                  pid() const      = 0;
         virtual SP<CWLSurfaceResource> surface() const  = 0;
         virtual PHLWINDOW              parent() const   = 0;

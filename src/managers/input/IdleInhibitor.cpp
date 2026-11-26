@@ -83,8 +83,12 @@ bool CInputManager::isWindowInhibiting(const PHLWINDOW& w, bool onlyHl) {
         if (ii->nonDesktop || !ii->inhibitor)
             continue;
 
+        const auto RESOURCE = w->resource();
+        if (!RESOURCE)
+            continue;
+
         bool isInhibiting = false;
-        w->wlSurface()->resource()->breadthfirst(
+        RESOURCE->breadthfirst(
             [&ii](SP<CWLSurfaceResource> surf, const Vector2D& pos, void* data) {
                 if (ii->inhibitor->m_surface != surf)
                     return;

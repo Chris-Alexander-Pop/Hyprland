@@ -105,10 +105,17 @@ int main(int argc, const char** argv, const char** envp) {
     bool lockedCrash = false;
 
     while (true) {
-        g_instance     = makeUnique<CHyprlandInstance>();
-        const bool RET = g_instance->run(safeMode, lockedCrash);
-        lockedCrash    = g_instance->m_hyprlandLocked;
+        g_instance               = makeUnique<CHyprlandInstance>();
+        const bool RET           = g_instance->run(safeMode, lockedCrash);
+        const bool restartNormal = g_instance->m_restartNormal;
+        lockedCrash              = g_instance->m_hyprlandLocked;
         g_instance.reset();
+
+        if (restartNormal) {
+            g_logger->log(Hyprutils::CLI::LOG_ERR, "Hyprland requested a restart on the normal config");
+            safeMode = false;
+            continue;
+        }
 
         if (!RET) {
             g_logger->log(Hyprutils::CLI::LOG_ERR, "Hyprland exit not-cleanly, restarting");

@@ -23,8 +23,16 @@ std::expected<SConfigStateReply, std::string> Jeremy::getMainConfigPath() {
         lastSafeMode     = g_pCompositor->m_safeMode;
         needsPathRecheck = false;
 
-        if (g_pCompositor->m_safeMode)
-            return SConfigStateReply{.path = (std::filesystem::path{g_pCompositor->m_instancePath} / "recoverycfg.lua").string(), .type = CONFIG_TYPE_SPECIAL};
+        if (g_pCompositor->m_safeMode) {
+            std::filesystem::path recovery;
+            if (const auto XDG = getenv("XDG_CONFIG_HOME"); XDG && XDG[0] != '\0')
+                recovery = std::filesystem::path{XDG} / "hypr" / "recovery.lua";
+            else if (const auto HOME = getenv("HOME"); HOME && HOME[0] != '\0')
+                recovery = std::filesystem::path{HOME} / ".config" / "hypr" / "recovery.lua";
+            else
+                recovery = std::filesystem::path{g_pCompositor->m_instancePath} / "recoverycfg.lua";
+            return SConfigStateReply{.path = recovery.string(), .type = CONFIG_TYPE_SPECIAL};
+        }
 
         if (!g_pCompositor->m_explicitConfigPath.empty())
             return SConfigStateReply{.path = g_pCompositor->m_explicitConfigPath, .type = CONFIG_TYPE_EXPLICIT};

@@ -18,6 +18,8 @@ class CHyprlandInstance {
     void forceQuit();
 
     bool m_hyprlandLocked = false;
+    // Recovery config asked for a full restart on the normal config.
+    bool m_restartNormal  = false;
 
   private:
     void                           runHyprlandThread(bool safeMode, bool lockedCrash);

@@ -89,6 +89,10 @@ namespace Config::Actions {
     ActionResult moveCursor(const Vector2D& pos);
     ActionResult exit();
     ActionResult reloadConfig();
+    // Leave safe mode and reload the normal config in this process.
+    ActionResult loadNormalConfig();
+    // Ask start-hyprland to spawn again without --safe-mode.
+    ActionResult restartWithoutSafeMode();
     ActionResult forceRendererReload();
     ActionResult toggleSwallow();
     ActionResult setSubmap(const std::string& submap);

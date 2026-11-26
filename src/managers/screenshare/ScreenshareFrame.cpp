@@ -20,6 +20,7 @@
 #include "../../render/pass/RectPassElement.hpp"
 #include "helpers/cm/ColorManagement.hpp"
 #include "../../managers/fullscreen/FullscreenController.hpp"
+#include "../input/LayerPointerHold.hpp"
 #include <hyprutils/math/Region.hpp>
 #include <hyprgraphics/egl/Egl.hpp>
 #include <hyprland-workspace-image-capture-source-v1.hpp>
@@ -329,7 +330,7 @@ void CScreenshareFrame::renderMonitor(Render::CRenderContext& ctx) {
         w->popupHead()->breadthfirst(hidePopups(popupBaseOffset), nullptr);
     }
 
-    if (m_overlayCursor) {
+    if (m_overlayCursor && !LayerPointerHold::freeze()) {
         CRegion  fakeDamage = {0, 0, m_bufferSize.x, m_bufferSize.y};
         Vector2D cursorPos  = Pointer::mgr()->untransformedPosition() - PMONITOR->m_position - m_session->m_captureBox.pos() / PMONITOR->m_scale;
         Pointer::mgr()->renderSoftwareCursorsFor(ctx, PMONITOR, Time::steadyNow(), fakeDamage, cursorPos, true);
@@ -359,6 +360,11 @@ void CScreenshareFrame::renderWindow(Render::CRenderContext& ctx) {
 
     if (!m_overlayCursor)
         return;
+
+    if (auto pin = LayerPointerHold::freezePin(); LayerPointerHold::freeze() && pin) {
+        Pointer::mgr()->renderFreezePinAt(PMONITOR->m_self.lock(), *pin - PWINDOW->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT));
+        return;
+    }
 
     auto pointerSurfaceResource = g_pSeatManager->m_state.pointerFocus.lock();
 

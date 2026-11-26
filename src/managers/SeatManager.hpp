@@ -13,6 +13,7 @@ constexpr size_t MAX_SERIAL_STORE_LEN = 100;
 class CWLSurfaceResource;
 class CWLSeatResource;
 class IPointer;
+struct wl_client;
 
 class IKeyboardEventHandler {
   public:
@@ -87,6 +88,8 @@ class CSeatManager {
     CKeyboardEventHandlerStack m_keyboardEventHandlers;
 
     void                       setPointerFocus(SP<CWLSurfaceResource> surf, const Vector2D& local);
+    void                       resetHoldOverlay();
+    void                       enterHoldBelow(SP<CWLSurfaceResource> surf, const Vector2D& local);
     void                       sendPointerMotion(uint32_t timeMs, const Vector2D& local);
     void                       sendPointerButton(uint32_t timeMs, uint32_t key, wl_pointer_button_state state);
     void                       sendPointerFrame();
@@ -185,6 +188,17 @@ class CSeatManager {
     SP<SSeatResourceContainer>              containerForResource(SP<CWLSeatResource> seatResource);
 
     void                                    refocusGrab();
+
+    void                                    sendPointerLeaveOnClient(wl_client* client);
+    void                                    sendPointerMotionOnClient(wl_client* client, uint32_t timeMs, const Vector2D& local);
+    void                                    sendPointerFrameOnClient(wl_client* client);
+    void                                    bindPointerFocusResource(SP<CWLSurfaceResource> surf);
+    void                                    enterAllClientPointers(SP<CWLSurfaceResource> surf, const Vector2D& local);
+    void                                    commitPointerFocus(SP<CWLSurfaceResource> surf, const Vector2D& local, bool enter);
+    void                                    focusHoldOverlay(SP<CWLSurfaceResource> ov, const Vector2D& local);
+    Vector2D                                pointerLocal() const {
+        return m_lastLocalCoords;
+    }
 
     struct {
         CHyprSignalListener newSeatResource;

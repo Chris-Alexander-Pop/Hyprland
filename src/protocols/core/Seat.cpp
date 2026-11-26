@@ -161,7 +161,8 @@ SP<CWLPointerResource> CWLPointerResource::fromResource(wl_resource* res) {
 }
 
 void CWLPointerResource::sendEnter(SP<CWLSurfaceResource> surface, const Vector2D& local) {
-    if (!m_owner || m_currentSurface == surface || !surface->getResource()->resource())
+    const auto res = surface ? surface->getResource() : nullptr;
+    if (!m_owner || !surface || m_currentSurface == surface || !res || !res->resource())
         return;
 
     if (!(PROTO::seat->m_currentCaps & eHIDCapabilityType::HID_INPUT_CAPABILITY_POINTER))
@@ -183,8 +184,15 @@ void CWLPointerResource::sendEnter(SP<CWLSurfaceResource> surface, const Vector2
 }
 
 void CWLPointerResource::sendLeave() {
-    if (!m_owner || !m_currentSurface || !m_currentSurface->getResource()->resource())
+    if (!m_owner || !m_currentSurface)
         return;
+    const auto res = m_currentSurface->getResource();
+    if (!res || !res->resource()) {
+        m_currentSurface.reset();
+        m_listeners.destroySurface.reset();
+        m_pressedButtons.clear();
+        return;
+    }
 
     if (!(PROTO::seat->m_currentCaps & eHIDCapabilityType::HID_INPUT_CAPABILITY_POINTER))
         return;

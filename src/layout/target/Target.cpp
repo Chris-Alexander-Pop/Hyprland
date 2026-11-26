@@ -120,6 +120,24 @@ Vector2D ITarget::pseudoSize() {
     return m_pseudoSize;
 }
 
+void ITarget::givePlacementTo(SP<ITarget> incoming) {
+    if (!incoming)
+        return;
+
+    incoming->m_space        = m_space;
+    incoming->m_box          = m_box;
+    incoming->m_pseudo       = m_pseudo;
+    incoming->m_pseudoSize   = m_pseudoSize;
+    incoming->m_wasTiling    = m_wasTiling;
+    incoming->m_ghostSpace   = m_ghostSpace;
+    incoming->m_floatingSize = m_floatingSize;
+}
+
+void ITarget::releaseSpace() {
+    m_space.reset();
+    m_ghostSpace = false;
+}
+
 void ITarget::swap(SP<ITarget> b) {
     const auto IS_FLOATING   = floating();
     const auto IS_FLOATING_B = b->floating();

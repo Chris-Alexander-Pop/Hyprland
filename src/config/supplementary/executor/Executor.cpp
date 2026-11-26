@@ -8,6 +8,12 @@
 #include "../../../desktop/state/FocusState.hpp"
 #include "../../../managers/TokenManager.hpp"
 #include "../../../output/Monitor.hpp"
+#include "../../../desktop/view/window/LaunchReservation.hpp"
+#include "../../../config/ConfigValue.hpp"
+
+#include <csignal>
+#include <unistd.h>
+#include <format>
 
 #include <hyprutils/string/String.hpp>
 #include <chrono>
@@ -80,25 +86,25 @@ void CExecutor::addExecShutdown(SExecRequest&& cmd) {
 }
 
 std::optional<uint64_t> CExecutor::spawn(const std::string& args) {
-    return spawnWithRules(args);
+    return spawnWithRules(args, nullptr, false);
 }
 
 std::optional<uint64_t> CExecutor::spawn(const SExecRequest& args) {
     if (args.rule)
-        return spawnWithRules(args.exec, nullptr, args.rule);
+        return spawnWithRules(args.exec, nullptr, args.rule, args.reserve);
 
-    return args.withRules ? spawn(args.exec) : spawnRaw(args.exec);
+    return args.withRules ? spawnWithRules(args.exec, nullptr, nullptr, args.reserve) : spawnRaw(args.exec);
 }
 
 std::optional<uint64_t> CExecutor::spawnRaw(const std::string& args) {
     return spawnRawProc(args);
 }
 
-std::optional<uint64_t> CExecutor::spawnWithRules(std::string args, PHLWORKSPACE pInitialWorkspace) {
-    return spawnWithRules(std::move(args), pInitialWorkspace, nullptr);
+std::optional<uint64_t> CExecutor::spawnWithRules(std::string args, PHLWORKSPACE pInitialWorkspace, bool reserve) {
+    return spawnWithRules(std::move(args), pInitialWorkspace, nullptr, reserve);
 }
 
-std::optional<uint64_t> CExecutor::spawnWithRules(std::string args, PHLWORKSPACE pInitialWorkspace, SP<Desktop::Rule::CWindowRule> rule) {
+std::optional<uint64_t> CExecutor::spawnWithRules(std::string args, PHLWORKSPACE pInitialWorkspace, SP<Desktop::Rule::CWindowRule> rule, bool reserve) {
     args = trim(args);
 
     std::string RULES = "";
@@ -125,11 +131,14 @@ std::optional<uint64_t> CExecutor::spawnWithRules(std::string args, PHLWORKSPACE
         legacyRule = std::move(*builtRule);
     }
 
+    if (m_isLaunchingExecOnce)
+        reserve = false;
+
     if (!legacyRule && !rule)
-        return spawnRawProc(args, pInitialWorkspace);
+        return spawnRawProc(args, pInitialWorkspace, "", reserve);
 
     const auto TOKEN = g_pTokenManager->registerNewToken(nullptr, std::chrono::seconds(1));
-    const auto PROC  = spawnRawProc(args, pInitialWorkspace, TOKEN);
+    const auto PROC  = spawnRawProc(args, pInitialWorkspace, TOKEN, reserve);
 
     if (!PROC || !*PROC)
         return std::nullopt;
@@ -170,8 +179,18 @@ std::vector<std::pair<std::string, std::string>> CExecutor::getHyprlandLaunchEnv
     return result;
 }
 
-std::optional<uint64_t> CExecutor::spawnRawProc(const std::string& args, PHLWORKSPACE pInitialWorkspace, const std::string& execRuleToken) {
+std::optional<uint64_t> CExecutor::spawnRawProc(const std::string& args, PHLWORKSPACE pInitialWorkspace, const std::string& execRuleToken, bool reserve) {
     LOG(Log::DEBUG, "[executor] Executing {}", args);
+
+    static auto PRESERVE = CConfigValue<Config::BOOL>("misc:launch_reservation");
+    if (reserve && (!*PRESERVE || !Desktop::focusState()->monitor()))
+        reserve = false;
+
+    std::string launchToken;
+    if (reserve) {
+        static uint64_t seq = 0;
+        launchToken         = std::format("hllaunch-{}-{}", getpid(), ++seq);
+    }
 
     const auto HLENV = getHyprlandLaunchEnv(pInitialWorkspace);
 
@@ -188,8 +207,15 @@ std::optional<uint64_t> CExecutor::spawnRawProc(const std::string& args, PHLWORK
         sigemptyset(&set);
         sigprocmask(SIG_SETMASK, &set, nullptr);
 
+        if (reserve)
+            setpgid(0, 0);
+
         for (auto const& e : HLENV) {
             setenv(e.first.c_str(), e.second.c_str(), 1);
+        }
+        if (!launchToken.empty()) {
+            setenv("HYPRLAND_LAUNCH_TOKEN", launchToken.c_str(), 1);
+            setenv("XDG_ACTIVATION_TOKEN", launchToken.c_str(), 1);
         }
         setenv("WAYLAND_DISPLAY", g_pCompositor->m_wlDisplaySocket.c_str(), 1);
         if (!execRuleToken.empty())
@@ -208,6 +234,11 @@ std::optional<uint64_t> CExecutor::spawnRawProc(const std::string& args, PHLWORK
         _exit(0);
     }
     // run in parent
+
+    if (reserve) {
+        setpgid(child, child);
+        Desktop::View::launchReservations().open(child, launchToken);
+    }
 
     LOG(Log::DEBUG, "[executor] Process created with pid {}", child);
 

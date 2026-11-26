@@ -2,6 +2,7 @@
 #include "../managers/TokenManager.hpp"
 #include "../Compositor.hpp"
 #include "../managers/SeatManager.hpp"
+#include "../desktop/view/window/LaunchReservation.hpp"
 #include "core/Compositor.hpp"
 #include <algorithm>
 
@@ -100,6 +101,14 @@ void CXDGActivationProtocol::bindManager(wl_client* client, void* data, uint32_t
 
         SP<CWLSurfaceResource> surf    = CWLSurfaceResource::fromResource(surface);
         const auto             PWINDOW = Desktop::viewState()->query().type(Desktop::View::VIEW_TYPE_WINDOW).surface(surf).runWindow();
+
+        if (Desktop::View::launchReservations().ownsToken(token)) {
+            if (PWINDOW)
+                Desktop::View::launchReservations().onActivation(token, PWINDOW);
+            if (PWINDOW)
+                PWINDOW->activate();
+            return;
+        }
 
         if UNLIKELY (!PWINDOW) {
             LOG(Log::WARN, "activate event for non-window or gone surface with token {}, ignoring", token);

@@ -7,6 +7,7 @@
 #include "../shared.hpp"
 
 #include <chrono>
+#include <format>
 #include <string>
 #include <thread>
 
@@ -39,7 +40,7 @@ SUBTEST(specialWorkspaceFullscreen) {
         NLog::log("{}Cleaning up special workspace fullscreen test", Colors::YELLOW);
         // Close special workspace if open
         auto monitors = getFromSocket("/monitors");
-        if (monitors.contains("(special:test_fs_special)") && !monitors.contains("special workspace: 0 ()"))
+        if (monitors.contains("(special:test_fs_special)") && !monitors.contains("special workspace:  ()"))
             getFromSocket("/dispatch hl.dsp.workspace.toggle_special('test_fs_special')");
         Tests::killAllWindows();
         OK(getFromSocket("/reload"));
@@ -52,8 +53,7 @@ SUBTEST(specialWorkspaceFullscreen) {
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 'special:test_fs_special' })"));
 
-    if (!Tests::spawnKitty("kitty_special"))
-        FAIL_TEST("Could not spawn kitty");
+    SPAWN_KITTY("kitty_special");
 
     {
         auto str = getFromSocket("/activewindow");
@@ -79,8 +79,7 @@ SUBTEST(specialWorkspaceFullscreen) {
     OK(getFromSocket("/dispatch hl.dsp.workspace.toggle_special('test_fs_special')"));
     getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })");
 
-    if (!Tests::spawnKitty("kitty_regular"))
-        FAIL_TEST("Could not spawn kitty");
+    SPAWN_KITTY("kitty_regular");
 
     OK(getFromSocket("/dispatch hl.dsp.window.fullscreen({ mode = 'fullscreen' })"));
 
@@ -111,7 +110,7 @@ SUBTEST(specialWorkspaceFullscreen) {
 
     {
         auto str = getFromSocket("/monitors");
-        EXPECT_CONTAINS(str, "special workspace: 0 ()");
+        EXPECT_CONTAINS(str, "special workspace:  ()");
     }
 }
 
@@ -131,8 +130,8 @@ SUBTEST(asymmetricGaps) {
     NLog::log("{}Testing default split (force_split = 0)", Colors::YELLOW);
     OK(getFromSocket("r/eval hl.config({ dwindle = { force_split = 0 } })"));
 
-    if (!Tests::spawnKitty("gaps_kitty_A") || !Tests::spawnKitty("gaps_kitty_B"))
-        FAIL_TEST("Could not spawn kitty");
+    SPAWN_KITTY("gaps_kitty_A");
+    SPAWN_KITTY("gaps_kitty_B");
 
     NLog::log("{}Expecting vertical split (B below A)", Colors::YELLOW);
     OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:gaps_kitty_A' })"));
@@ -146,8 +145,8 @@ SUBTEST(asymmetricGaps) {
     NLog::log("{}Testing force_split = 1", Colors::YELLOW);
     OK(getFromSocket("r/eval hl.config({ dwindle = { force_split = 1 } })"));
 
-    if (!Tests::spawnKitty("gaps_kitty_A") || !Tests::spawnKitty("gaps_kitty_B"))
-        FAIL_TEST("Could not spawn kitty");
+    SPAWN_KITTY("gaps_kitty_A");
+    SPAWN_KITTY("gaps_kitty_B");
 
     NLog::log("{}Expecting vertical split (B above A)", Colors::YELLOW);
     OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:gaps_kitty_B' })"));
@@ -158,8 +157,7 @@ SUBTEST(asymmetricGaps) {
     NLog::log("{}Expecting horizontal split (C left of B)", Colors::YELLOW);
     OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:gaps_kitty_B' })"));
 
-    if (!Tests::spawnKitty("gaps_kitty_C"))
-        FAIL_TEST("Could not spawn kitty");
+    SPAWN_KITTY("gaps_kitty_C");
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:gaps_kitty_C' })"));
     EXPECT_CONTAINS(getFromSocket("/activewindow"), "at: 0,0");
@@ -172,8 +170,8 @@ SUBTEST(asymmetricGaps) {
     NLog::log("{}Testing force_split = 2", Colors::YELLOW);
     OK(getFromSocket("r/eval hl.config({ dwindle = { force_split = 2 } })"));
 
-    if (!Tests::spawnKitty("gaps_kitty_A") || !Tests::spawnKitty("gaps_kitty_B"))
-        FAIL_TEST("Could not spawn kitty");
+    SPAWN_KITTY("gaps_kitty_A");
+    SPAWN_KITTY("gaps_kitty_B");
 
     NLog::log("{}Expecting vertical split (B below A)", Colors::YELLOW);
     OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:gaps_kitty_A' })"));
@@ -184,8 +182,7 @@ SUBTEST(asymmetricGaps) {
     NLog::log("{}Expecting horizontal split (C right of A)", Colors::YELLOW);
     OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:gaps_kitty_A' })"));
 
-    if (!Tests::spawnKitty("gaps_kitty_C"))
-        FAIL_TEST("Could not spawn kitty");
+    SPAWN_KITTY("gaps_kitty_C");
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:gaps_kitty_A' })"));
     EXPECT_CONTAINS(getFromSocket("/activewindow"), "at: 0,0");
@@ -203,23 +200,23 @@ SUBTEST(workspaceHistoryMultiMon) {
     // Initial state:
     OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-2' })"));
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '10' })"));
-    Tests::spawnKitty();
+    SPAWN_KITTY("a");
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '11' })"));
-    Tests::spawnKitty();
+    SPAWN_KITTY("a");
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-3' })"));
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '12' })"));
-    Tests::spawnKitty();
+    SPAWN_KITTY("a");
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-2' })"));
     {
         auto str = getFromSocket("/activeworkspace");
-        EXPECT_CONTAINS(str, "workspace ID 11");
+        EXPECT_CONTAINS(str, "workspace 11");
     }
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 'previous_per_monitor' })"));
     {
         auto str = getFromSocket("/activeworkspace");
-        EXPECT_CONTAINS(str, "workspace ID 10");
+        EXPECT_CONTAINS(str, "workspace 10");
     }
 
     NLog::log("{}Killing all windows", Colors::YELLOW);
@@ -234,22 +231,22 @@ SUBTEST(multimonBAF) {
     OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-2' })"));
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
 
-    Tests::spawnKitty();
+    SPAWN_KITTY("a");
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '2' })"));
 
-    Tests::spawnKitty();
+    SPAWN_KITTY("a");
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-3' })"));
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '3' })"));
 
-    Tests::spawnKitty();
+    SPAWN_KITTY("a");
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '3' })"));
 
     {
         auto str = getFromSocket("/activeworkspace");
-        EXPECT_CONTAINS(str, "workspace ID 2 ");
+        EXPECT_CONTAINS(str, "workspace 2 ");
     }
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '4' })"));
@@ -257,14 +254,14 @@ SUBTEST(multimonBAF) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        EXPECT_CONTAINS(str, "workspace ID 2 ");
+        EXPECT_CONTAINS(str, "workspace 2 ");
     }
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '2' })"));
 
     {
         auto str = getFromSocket("/activeworkspace");
-        EXPECT_CONTAINS(str, "workspace ID 4 ");
+        EXPECT_CONTAINS(str, "workspace 4 ");
     }
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '3' })"));
@@ -272,7 +269,7 @@ SUBTEST(multimonBAF) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        EXPECT_CONTAINS(str, "workspace ID 4 ");
+        EXPECT_CONTAINS(str, "workspace 4 ");
     }
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '2' })"));
@@ -282,7 +279,59 @@ SUBTEST(multimonBAF) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        EXPECT_CONTAINS(str, "workspace ID 3 ");
+        EXPECT_CONTAINS(str, "workspace 3 ");
+    }
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-2' })"));
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1', on_current_monitor = true })"));
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-3' })"));
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '3', on_current_monitor = true })"));
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '4', on_current_monitor = true })"));
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '2', on_current_monitor = true })"));
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '2', on_current_monitor = true })"));
+
+    {
+        auto str = getFromSocket("/activeworkspace");
+        EXPECT_CONTAINS(str, "workspace 4 ");
+        EXPECT_CONTAINS(str, "on monitor HEADLESS-3:");
+    }
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
+
+    {
+        auto str = getFromSocket("/activeworkspace");
+        EXPECT_CONTAINS(str, "workspace 4 ");
+        EXPECT_CONTAINS(str, "on monitor HEADLESS-3:");
+    }
+
+    OK(getFromSocket("/eval hl.config({ binds = { workspace_back_and_forth = 2 } })"));
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
+
+    // There should be no previous on monitor HEADLESS-2
+    {
+        auto str = getFromSocket("/activeworkspace");
+        EXPECT_CONTAINS(str, "workspace 1 ");
+        EXPECT_CONTAINS(str, "on monitor HEADLESS-2:");
+    }
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '3', on_current_monitor = true })"));
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '3', on_current_monitor = true })"));
+
+    {
+        auto str = getFromSocket("/activeworkspace");
+        EXPECT_CONTAINS(str, "workspace 1 ");
+        EXPECT_CONTAINS(str, "on monitor HEADLESS-2:");
+    }
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
+
+    {
+        auto str = getFromSocket("/activeworkspace");
+        EXPECT_CONTAINS(str, "workspace 3 ");
+        EXPECT_CONTAINS(str, "on monitor HEADLESS-2:");
     }
 
     Tests::killAllWindows();
@@ -298,16 +347,21 @@ SUBTEST(multimonFocus) {
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '7' })"));
 
     for (auto const& win : {"a", "b"}) {
-        if (!Tests::spawnKitty(win))
-            FAIL_TEST("Could not spawn kitty with win class `{}`", win);
+        SPAWN_KITTY(win);
     }
+
+    // Test that focus of a workspace with no windows works.
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 8 })"));
+    auto str = getFromSocket("/activeworkspace");
+    ASSERT_CONTAINS(str, "workspace 8 (");
+    ASSERT_CONTAINS(str, ") on monitor HEADLESS-3:\n");
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:a' })"));
     OK(getFromSocket("/dispatch hl.dsp.focus({ direction = 'right' })"));
 
     {
         auto str = getFromSocket("/activeworkspace");
-        EXPECT_CONTAINS(str, "workspace ID 7 ");
+        EXPECT_CONTAINS(str, "workspace 7 ");
     }
 
     {
@@ -319,10 +373,10 @@ SUBTEST(multimonFocus) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        EXPECT_CONTAINS(str, "workspace ID 8 ");
+        EXPECT_CONTAINS(str, "workspace 8 ");
     }
 
-    Tests::spawnKitty("c");
+    SPAWN_KITTY("c");
 
     {
         auto str = getFromSocket("/activewindow");
@@ -331,7 +385,7 @@ SUBTEST(multimonFocus) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        EXPECT_CONTAINS(str, "workspace ID 8 ");
+        EXPECT_CONTAINS(str, "workspace 8 ");
     }
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ direction = 'left' })"));
@@ -343,7 +397,7 @@ SUBTEST(multimonFocus) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        EXPECT_CONTAINS(str, "workspace ID 7 ");
+        EXPECT_CONTAINS(str, "workspace 7 ");
     }
 
     OK(getFromSocket("/dispatch hl.dsp.window.move({ direction = 'right' })"));
@@ -355,7 +409,7 @@ SUBTEST(multimonFocus) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_CONTAINS(str, "workspace ID 8 ");
+        ASSERT_CONTAINS(str, "workspace 8 ");
     }
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ direction = 'right' })"));
@@ -367,7 +421,7 @@ SUBTEST(multimonFocus) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_CONTAINS(str, "workspace ID 8 ");
+        ASSERT_CONTAINS(str, "workspace 8 ");
     }
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ direction = 'left' })"));
@@ -384,7 +438,7 @@ SUBTEST(multimonFocus) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_CONTAINS(str, "workspace ID 8 ");
+        ASSERT_CONTAINS(str, "workspace 8 ");
     }
 
     OK(getFromSocket("/dispatch hl.dsp.window.move({ direction = 'left' })"));
@@ -396,7 +450,7 @@ SUBTEST(multimonFocus) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_CONTAINS(str, "workspace ID 8 ");
+        ASSERT_CONTAINS(str, "workspace 8 ");
     }
 
     OK(getFromSocket("/reload"));
@@ -409,7 +463,10 @@ SUBTEST(dynamicWsEffects) {
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '69' })"));
 
-    Tests::spawnKitty("bitch");
+    SPAWN_KITTY("bitch");
+
+    OK(getFromSocket("r/eval hl.config({ decoration = { rounding = { top_left = 5, top_right = 10, bottom_right = 15, bottom_left = 20 } } })"));
+    ASSERT(getFromSocket("/getprop class:bitch rounding"), "5 10 15 20");
 
     OK(getFromSocket("r/eval hl.workspace_rule({ workspace = '69', border_size = 20 })"));
     OK(getFromSocket("r/eval hl.workspace_rule({ workspace = '69', no_rounding = true })"));
@@ -417,9 +474,105 @@ SUBTEST(dynamicWsEffects) {
     ASSERT(getFromSocket("/getprop class:bitch border_size"), "20");
     ASSERT(getFromSocket("/getprop class:bitch rounding"), "0");
 
+    OK(getFromSocket("r/eval hl.workspace_rule({ workspace = '69', no_rounding = false })"));
+    ASSERT(getFromSocket("/getprop class:bitch rounding"), "5 10 15 20");
+
     OK(getFromSocket("/reload"));
 
     Tests::killAllWindows();
+}
+
+TEST_CASE(workspaceRelativeNegativeClamp) {
+    bool        monitorCreated = false;
+    CScopeGuard guard          = {[this, &monitorCreated]() {
+        EXPECT(Tests::killAllWindows(), true);
+        if (monitorCreated) {
+            EXPECT_OK(getFromSocket("/output remove HEADLESS-3"));
+            EXPECT(waitForMonitorListed("HEADLESS-3", false), true);
+        }
+        EXPECT_OK(getFromSocket("/reload"));
+        EXPECT_OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-2' })"));
+        EXPECT_OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
+    }};
+
+    OK(getFromSocket("/eval hl.config({ binds = { workspace_back_and_forth = 0 }, input = { follow_mouse = 0 } })"));
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-2' })"));
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1', on_current_monitor = true })"));
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 1 (1) on monitor HEADLESS-2:");
+    SPAWN_KITTY("workspace_relative_negative_clamp");
+
+    ASSERT_NOT_CONTAINS(getFromSocket("/monitors all"), "HEADLESS-3");
+    OK(getFromSocket("/output create headless HEADLESS-3"));
+    monitorCreated = true;
+    ASSERT(waitForMonitorListed("HEADLESS-3", true), true);
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-3' })"));
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '2', on_current_monitor = true })"));
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 2 (2) on monitor HEADLESS-3:");
+
+    // Regresses #16748: underflow must not focus workspace 1 on the other monitor.
+    for (const auto& selector : {"r-1", "r-100"}) {
+        OK(getFromSocket(std::format("/dispatch hl.dsp.focus({{ workspace = '{}' }})", selector)));
+        ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 2 (2) on monitor HEADLESS-3:");
+        ASSERT_CONTAINS(getFromSocket("/workspaces"), "workspace 1 (1) on monitor HEADLESS-2:");
+    }
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 'r+1' })"));
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 3 (3) on monitor HEADLESS-3:");
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 'r-1' })"));
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 2 (2) on monitor HEADLESS-3:");
+
+    // Clamp to the first available workspace, not simply the current workspace.
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '4' })"));
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 4 (4) on monitor HEADLESS-3:");
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 'r-100' })"));
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 2 (2) on monitor HEADLESS-3:");
+    ASSERT_CONTAINS(getFromSocket("/workspaces"), "workspace 1 (1) on monitor HEADLESS-2:");
+}
+
+TEST_CASE(workspaceRelativeNegativeClampRules) {
+    bool        monitorCreated = false;
+    CScopeGuard guard          = {[this, &monitorCreated]() {
+        if (monitorCreated) {
+            EXPECT_OK(getFromSocket("/output remove HEADLESS-3"));
+            EXPECT(waitForMonitorListed("HEADLESS-3", false), true);
+        }
+        EXPECT_OK(getFromSocket("/reload"));
+        EXPECT_OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-2' })"));
+        EXPECT_OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
+    }};
+
+    OK(getFromSocket("/eval hl.config({ binds = { workspace_back_and_forth = 0 }, input = { follow_mouse = 0 } })"));
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-2' })"));
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '10', on_current_monitor = true })"));
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 10 (10) on monitor HEADLESS-2:");
+
+    ASSERT_NOT_CONTAINS(getFromSocket("/monitors all"), "HEADLESS-3");
+    OK(getFromSocket("/output create headless HEADLESS-3"));
+    monitorCreated = true;
+    ASSERT(waitForMonitorListed("HEADLESS-3", true), true);
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-3' })"));
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '4', on_current_monitor = true })"));
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 4 (4) on monitor HEADLESS-3:");
+
+    OK(getFromSocket("/eval hl.workspace_rule({ workspace = '1', monitor = 'HEADLESS-2', persistent = false })"));
+    OK(getFromSocket("/eval hl.workspace_rule({ workspace = '2', monitor = 'HEADLESS-2', persistent = false })"));
+    Tests::sync();
+
+    // Only rules exclude 1 and 2; the first available workspace must be created.
+    const auto INITIAL_WORKSPACES = getFromSocket("/workspaces");
+    ASSERT_NOT_CONTAINS(INITIAL_WORKSPACES, "workspace 1 (1)");
+    ASSERT_NOT_CONTAINS(INITIAL_WORKSPACES, "workspace 2 (2)");
+    ASSERT_NOT_CONTAINS(INITIAL_WORKSPACES, "workspace 3 (3)");
+
+    for (const auto& selector : {"r-100", "r-1"}) {
+        OK(getFromSocket(std::format("/dispatch hl.dsp.focus({{ workspace = '{}' }})", selector)));
+        ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 3 (3) on monitor HEADLESS-3:");
+
+        const auto WORKSPACES = getFromSocket("/workspaces");
+        ASSERT_NOT_CONTAINS(WORKSPACES, "workspace 1 (1)");
+        ASSERT_NOT_CONTAINS(WORKSPACES, "workspace 2 (2)");
+        ASSERT_CONTAINS(WORKSPACES, "workspace 10 (10) on monitor HEADLESS-2:");
+    }
 }
 
 // TODO: decompose this into multiple test cases
@@ -429,7 +582,7 @@ TEST_CASE(workspacesCombined) {
 
     {
         auto str = getFromSocket("/workspaces");
-        ASSERT_CONTAINS(str, "workspace ID 966 (966)");
+        ASSERT_CONTAINS(str, "workspace 966 (966)");
     }
 
     OK(getFromSocket("/reload"));
@@ -437,19 +590,13 @@ TEST_CASE(workspacesCombined) {
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
 
     NLog::log("{}Spawning kittyProc on ws 1", Colors::YELLOW);
-    auto kittyProcA = Tests::spawnKitty();
-
-    if (!kittyProcA)
-        FAIL_TEST("Could not spawn kitty");
+    SPAWN_KITTY("a");
 
     NLog::log("{}Switching to workspace 3", Colors::YELLOW);
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '3' })"));
 
     NLog::log("{}Spawning kittyProc on ws 3", Colors::YELLOW);
-    auto kittyProcB = Tests::spawnKitty();
-
-    if (!kittyProcB)
-        FAIL_TEST("Could not spawn kitty");
+    SPAWN_KITTY("b");
 
     NLog::log("{}Switching to workspace 1", Colors::YELLOW);
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
@@ -459,14 +606,14 @@ TEST_CASE(workspacesCombined) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_STARTS_WITH(str, "workspace ID 2 (2)");
+        ASSERT_STARTS_WITH(str, "workspace 2 (2)");
     }
 
     // check if the other workspaces are alive
     {
         auto str = getFromSocket("/workspaces");
-        ASSERT_CONTAINS(str, "workspace ID 3 (3)");
-        ASSERT_CONTAINS(str, "workspace ID 1 (1)");
+        ASSERT_CONTAINS(str, "workspace 3 (3)");
+        ASSERT_CONTAINS(str, "workspace 1 (1)");
     }
 
     NLog::log("{}Switching to workspace 1", Colors::YELLOW);
@@ -474,7 +621,7 @@ TEST_CASE(workspacesCombined) {
 
     {
         auto str = getFromSocket("/workspaces");
-        ASSERT_NOT_CONTAINS(str, "workspace ID 2 (2)");
+        ASSERT_NOT_CONTAINS(str, "workspace 2 (2)");
     }
 
     NLog::log("{}Switching to workspace m+1", Colors::YELLOW);
@@ -482,7 +629,7 @@ TEST_CASE(workspacesCombined) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_STARTS_WITH(str, "workspace ID 3 (3)");
+        ASSERT_STARTS_WITH(str, "workspace 3 (3)");
     }
 
     NLog::log("{}Switching to workspace -1", Colors::YELLOW);
@@ -490,7 +637,7 @@ TEST_CASE(workspacesCombined) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_STARTS_WITH(str, "workspace ID 2 (2)");
+        ASSERT_STARTS_WITH(str, "workspace 2 (2)");
     }
 
     NLog::log("{}Switching to workspace 1", Colors::YELLOW);
@@ -501,7 +648,7 @@ TEST_CASE(workspacesCombined) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_STARTS_WITH(str, "workspace ID 2 (2)");
+        ASSERT_STARTS_WITH(str, "workspace 2 (2)");
     }
 
     NLog::log("{}Switching to workspace r+1", Colors::YELLOW);
@@ -509,7 +656,7 @@ TEST_CASE(workspacesCombined) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_STARTS_WITH(str, "workspace ID 3 (3)");
+        ASSERT_STARTS_WITH(str, "workspace 3 (3)");
     }
 
     NLog::log("{}Switching to workspace r~1", Colors::YELLOW);
@@ -517,7 +664,7 @@ TEST_CASE(workspacesCombined) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_STARTS_WITH(str, "workspace ID 1 (1)");
+        ASSERT_STARTS_WITH(str, "workspace 1 (1)");
     }
 
     NLog::log("{}Switching to workspace empty", Colors::YELLOW);
@@ -525,7 +672,7 @@ TEST_CASE(workspacesCombined) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_STARTS_WITH(str, "workspace ID 2 (2)");
+        ASSERT_STARTS_WITH(str, "workspace 2 (2)");
     }
 
     NLog::log("{}Switching to workspace previous", Colors::YELLOW);
@@ -533,7 +680,7 @@ TEST_CASE(workspacesCombined) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_STARTS_WITH(str, "workspace ID 1 (1)");
+        ASSERT_STARTS_WITH(str, "workspace 1 (1)");
     }
 
     NLog::log("{}Switching to workspace name:TEST_WORKSPACE_NULL", Colors::YELLOW);
@@ -541,7 +688,7 @@ TEST_CASE(workspacesCombined) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_STARTS_WITH(str, "workspace ID -1337 (TEST_WORKSPACE_NULL)");
+        ASSERT_STARTS_WITH(str, "workspace TEST_WORKSPACE_NULL (TEST_WORKSPACE_NULL)");
     }
 
     NLog::log("{}Switching to workspace 1", Colors::YELLOW);
@@ -564,7 +711,7 @@ TEST_CASE(workspacesCombined) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_STARTS_WITH(str, "workspace ID 1 (1)");
+        ASSERT_STARTS_WITH(str, "workspace 1 (1)");
     }
 
     NLog::log("{}Switching to workspace r+1", Colors::YELLOW);
@@ -572,7 +719,7 @@ TEST_CASE(workspacesCombined) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_STARTS_WITH(str, "workspace ID 3 (3)");
+        ASSERT_STARTS_WITH(str, "workspace 3 (3)");
     }
 
     NLog::log("{}Switching to workspace r~2", Colors::YELLOW);
@@ -581,7 +728,7 @@ TEST_CASE(workspacesCombined) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_STARTS_WITH(str, "workspace ID 3 (3)");
+        ASSERT_STARTS_WITH(str, "workspace 3 (3)");
     }
 
     NLog::log("{}Switching to workspace m+1", Colors::YELLOW);
@@ -589,7 +736,7 @@ TEST_CASE(workspacesCombined) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_STARTS_WITH(str, "workspace ID 1 (1)");
+        ASSERT_STARTS_WITH(str, "workspace 1 (1)");
     }
 
     NLog::log("{}Switching to workspace 1", Colors::YELLOW);
@@ -598,7 +745,7 @@ TEST_CASE(workspacesCombined) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_STARTS_WITH(str, "workspace ID 1 (1)");
+        ASSERT_STARTS_WITH(str, "workspace 1 (1)");
     }
 
     NLog::log("{}Testing back_and_forth", Colors::YELLOW);
@@ -607,7 +754,7 @@ TEST_CASE(workspacesCombined) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_STARTS_WITH(str, "workspace ID 3 (3)");
+        ASSERT_STARTS_WITH(str, "workspace 3 (3)");
     }
 
     OK(getFromSocket("/eval hl.config({ binds = { workspace_back_and_forth = false } })"));
@@ -618,8 +765,7 @@ TEST_CASE(workspacesCombined) {
 
     {
         auto str = getFromSocket("/monitors");
-        ASSERT_CONTAINS(str, "special workspace: -");
-        ASSERT_CONTAINS(str, "special:HELLO");
+        ASSERT_CONTAINS(str, "special workspace: special:HELLO (special:HELLO)");
     }
 
     // no OK: will err (it shouldn't prolly but oh well)
@@ -627,7 +773,7 @@ TEST_CASE(workspacesCombined) {
 
     {
         auto str = getFromSocket("/monitors");
-        ASSERT_COUNT_STRING(str, "special workspace: 0 ()", 2);
+        ASSERT_COUNT_STRING(str, "special workspace:  ()", 2);
     }
 
     OK(getFromSocket("/eval hl.config({ binds = { hide_special_on_workspace_change = false } })"));
@@ -643,21 +789,21 @@ TEST_CASE(workspacesCombined) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_STARTS_WITH(str, "workspace ID 3 (3)");
+        ASSERT_STARTS_WITH(str, "workspace 3 (3)");
     }
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 'previous' })"));
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_STARTS_WITH(str, "workspace ID 1 (1)");
+        ASSERT_STARTS_WITH(str, "workspace 1 (1)");
     }
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 'previous' })"));
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_STARTS_WITH(str, "workspace ID 3 (3)");
+        ASSERT_STARTS_WITH(str, "workspace 3 (3)");
     }
 
     OK(getFromSocket("/eval hl.config({ binds = { allow_workspace_cycles = false } })"));
@@ -670,9 +816,9 @@ TEST_CASE(workspacesCombined) {
     // spawn 3 kitties
     NLog::log("{}Testing focus_preferred_method", Colors::YELLOW);
     OK(getFromSocket("/eval hl.config({ dwindle = { force_split = 2 } })"));
-    Tests::spawnKitty("kitty_A");
-    Tests::spawnKitty("kitty_B");
-    Tests::spawnKitty("kitty_C");
+    SPAWN_KITTY("kitty_A");
+    SPAWN_KITTY("kitty_B");
+    SPAWN_KITTY("kitty_C");
     OK(getFromSocket("/eval hl.config({ dwindle = { force_split = 0 } })"));
 
     // focus kitty 2: will be top right (dwindle)
@@ -708,7 +854,7 @@ TEST_CASE(workspacesCombined) {
     NLog::log("{}Testing movefocus_cycles_fullscreen", Colors::YELLOW);
     OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:kitty_A' })"));
     OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-3' })"));
-    Tests::spawnKitty("kitty_D");
+    SPAWN_KITTY("kitty_D");
     {
         auto str = getFromSocket("/activewindow");
         ASSERT_CONTAINS(str, "class: kitty_D");
@@ -752,7 +898,12 @@ TEST_CASE(workspacesCombined) {
     Tests::killAllWindows();
 
     CALL_SUBTEST(multimonBAF);
-    CALL_SUBTEST(multimonFocus);
+    // Test with both `no_warps=true` and `no_warps=false`
+    for (std::string conf : {"cursor={no_warps=true}", "cursor={no_warps=false}"}) {
+        NLog::yellow("Setting hl.config({{{}}})", conf);
+        OK(getFromSocket("/eval hl.config({" + conf + "})"));
+        CALL_SUBTEST(multimonFocus);
+    }
     CALL_SUBTEST(workspaceHistoryMultiMon);
 
     // destroy the headless output
@@ -784,14 +935,14 @@ TEST_CASE(workspacesFollowProperNoGaps) {
  })
     )#"));
 
-    ASSERT(!!Tests::spawnKitty(), true);
+    SPAWN_KITTY("a");
 
     {
         auto str = getFromSocket("/activewindow");
         ASSERT_CONTAINS(str, "size: 1920,1080");
     }
 
-    ASSERT(!!Tests::spawnKitty(), true);
+    SPAWN_KITTY("a");
 
     OK(getFromSocket("/dispatch hl.dsp.window.move({ workspace = \"101\" })"));
 
@@ -802,7 +953,7 @@ TEST_CASE(workspacesFollowProperNoGaps) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_CONTAINS(str, "workspace ID 101 (101)");
+        ASSERT_CONTAINS(str, "workspace 101 (101)");
     }
 }
 
@@ -846,8 +997,8 @@ hl.window_rule({
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HSG-L' })"));
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '230' })"));
-    ASSERT(!!Tests::spawnKitty("smart_gaps_src_a"), true);
-    ASSERT(!!Tests::spawnKitty("smart_gaps_src_b"), true);
+    SPAWN_KITTY("smart_gaps_src_a");
+    SPAWN_KITTY("smart_gaps_src_b");
 
     {
         auto str = getFromSocket("/activewindow");
@@ -857,7 +1008,7 @@ hl.window_rule({
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HSG-R' })"));
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '231' })"));
-    ASSERT(!!Tests::spawnKitty("smart_gaps_dst"), true);
+    SPAWN_KITTY("smart_gaps_dst");
 
     {
         auto str = getFromSocket("/activewindow");
@@ -886,23 +1037,23 @@ hl.window_rule({
 
 TEST_CASE(workspaceRenameChangeID) {
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = \"150\" })"));
-    Tests::spawnKitty();
+    SPAWN_KITTY("a");
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = \"name:coce\" })"));
-    Tests::spawnKitty();
+    SPAWN_KITTY("a");
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = \"100\" })"));
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_CONTAINS(str, "workspace ID 100 (100)");
+        ASSERT_CONTAINS(str, "workspace 100 (100)");
     }
 
     OK(getFromSocket("/dispatch hl.dsp.workspace.change_id({ workspace = \"100\", id = 101 })"));
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_CONTAINS(str, "workspace ID 101 (101)");
+        ASSERT_CONTAINS(str, "workspace 101 (101)");
     }
 
     NOK(getFromSocket("/dispatch hl.dsp.workspace.change_id({ workspace = \"101\", id = -1 })"));        // bad id
@@ -914,22 +1065,52 @@ TEST_CASE(workspaceRenameChangeID) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_CONTAINS(str, "workspace ID 101 (101)");
+        ASSERT_CONTAINS(str, "workspace 101 (101)");
     }
 
     OK(getFromSocket("/dispatch hl.dsp.workspace.rename({ workspace = \"101\", name = \"vaxry_was_here\" })"));
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_CONTAINS(str, "workspace ID 101 (vaxry_was_here)");
+        ASSERT_CONTAINS(str, "workspace 101 (vaxry_was_here)");
     }
 
     OK(getFromSocket("/dispatch hl.dsp.workspace.change_id({ workspace = \"101\", id = 102 })"));
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_CONTAINS(str, "workspace ID 102 (vaxry_was_here)");
+        ASSERT_CONTAINS(str, "workspace 102 (vaxry_was_here)");
     }
+}
+
+TEST_CASE(workspaceRenameEmitsGlobalEvent) {
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '5201' })"));
+    SPAWN_KITTY("workspace_rename_event");
+
+    OK(getFromSocket("/eval hl.plugin.test.expect_workspace_rename_event('5201', 'renamed_by_event_test')"));
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 5201 (renamed_by_event_test)");
+
+    Tests::killAllWindows();
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
+}
+
+TEST_CASE(windowAtExplicitWorkspace) {
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '5101' })"));
+    SPAWN_KITTY("hit_workspace_tiled");
+    SPAWN_KITTY("hit_workspace_floating");
+    OK(getFromSocket("/dispatch hl.dsp.window.float({ action = 'set', window = 'class:hit_workspace_floating' })"));
+    OK(getFromSocket("/dispatch hl.dsp.window.resize({ x = 300, y = 300, window = 'class:hit_workspace_floating' })"));
+    OK(getFromSocket("/dispatch hl.dsp.window.move({ x = 300, y = 300, window = 'class:hit_workspace_floating' })"));
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '5102' })"));
+    SPAWN_KITTY("hit_workspace_visible");
+
+    OK(getFromSocket("/eval hl.plugin.test.expect_window_at_workspace('5101', 400, 400, 'hit_workspace_floating')"));
+    OK(getFromSocket("/eval hl.plugin.test.expect_window_at_workspace('5101', 400, 400, 'hit_workspace_tiled', 'hit_workspace_floating')"));
+    OK(getFromSocket("/eval hl.plugin.test.expect_window_at_workspace('5102', 400, 400, 'hit_workspace_visible')"));
+
+    Tests::killAllWindows();
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
 }
 
 TEST_CASE(workspaceChangeIDUpdatesRules) {
@@ -937,12 +1118,12 @@ TEST_CASE(workspaceChangeIDUpdatesRules) {
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_CONTAINS(str, "workspace ID 200 (200)");
+        ASSERT_CONTAINS(str, "workspace 200 (200)");
     }
 
     OK(getFromSocket("r/eval hl.workspace_rule({ workspace = '201', gaps_out = { top = 40, right = 40, bottom = 40, left = 40 } })"));
 
-    Tests::spawnKitty();
+    SPAWN_KITTY("a");
 
     {
         auto str = getFromSocket("/activewindow");
@@ -959,17 +1140,17 @@ TEST_CASE(workspaceChangeIDUpdatesRules) {
     }
 }
 
-TEST_CASE(workspaceRenameUpdatesRules) {
+TEST_CASE(workspaceRenameDoesNotChangeAddress) {
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = \"200\" })"));
 
     {
         auto str = getFromSocket("/activeworkspace");
-        ASSERT_CONTAINS(str, "workspace ID 200 (200)");
+        ASSERT_CONTAINS(str, "workspace 200 (200)");
     }
 
     OK(getFromSocket("r/eval hl.workspace_rule({ workspace = 'name:vaxry', gaps_out = { top = 40, right = 40, bottom = 40, left = 40 } })"));
 
-    Tests::spawnKitty();
+    SPAWN_KITTY("a");
 
     {
         auto str = getFromSocket("/activewindow");
@@ -982,6 +1163,573 @@ TEST_CASE(workspaceRenameUpdatesRules) {
 
     {
         auto str = getFromSocket("/activewindow");
-        ASSERT_CONTAINS(str, "at: 42,42");
+        ASSERT_CONTAINS(str, "at: 22,22");
     }
+}
+
+TEST_CASE(workspaceRulesMatchBareAddressableNames) {
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 'name:vaxry' })"));
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace vaxry (vaxry)");
+
+    OK(getFromSocket("r/eval hl.workspace_rule({ workspace = 'vaxry', gaps_out = { top = 40, right = 40, bottom = 40, left = 40 } })"));
+
+    SPAWN_KITTY("a");
+    ASSERT_CONTAINS(getFromSocket("/activewindow"), "at: 42,42");
+
+    OK(getFromSocket("/dispatch hl.dsp.workspace.rename({ workspace = 'vaxry', name = 'renamed' })"));
+    Tests::sync();
+
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace vaxry (renamed)");
+    ASSERT_CONTAINS(getFromSocket("/activewindow"), "at: 42,42");
+}
+
+TEST_CASE(luaGetWorkspace) {
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 'name:test' })"));
+    {
+        auto str = getFromSocket("/activeworkspace");
+        ASSERT_CONTAINS(str, "workspace test (test)");
+    }
+    SPAWN_KITTY("a");
+
+    ASSERT(getFromSocket("/repl hl.get_workspace('name:test')"), "HL.Workspace(test:test)");
+    ASSERT(getFromSocket("/repl hl.get_workspace('test')"), "HL.Workspace(test:test)");
+    ASSERT(getFromSocket("/repl hl.get_workspace('name:test') == hl.get_active_workspace()"), "true");
+    ASSERT(getFromSocket("/repl hl.get_workspace('test') == hl.get_active_workspace()"), "true");
+    ASSERT(getFromSocket("/repl type(hl.get_active_workspace().id)"), "nil");
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 1})"));
+    {
+        auto str = getFromSocket("/activeworkspace");
+        ASSERT_CONTAINS(str, "workspace 1 (1)");
+    }
+    ASSERT(getFromSocket("/repl hl.get_active_workspace().id"), "1");
+    ASSERT(getFromSocket("/repl math.type(hl.get_active_workspace().id)"), "integer");
+
+    ASSERT(getFromSocket("/repl hl.get_workspace('e-1')"), "HL.Workspace(test:test)");
+    ASSERT(getFromSocket("/repl hl.get_workspace('r+1')"), "nil");
+    ASSERT(getFromSocket("/repl hl.get_workspace(42)"), "nil");
+}
+
+SUBTEST(luaSetWorkspaceCreate) {
+    // set up monitor 2, the workspace donor for future tests
+    NLog::log("{}Creating four new workspaces on monitor 2", Colors::YELLOW);
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = M2 })"));
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "on monitor HEADLESS-3:");
+
+    OK(getFromSocket("/eval M2:set_workspace(100)"));
+    SPAWN_KITTY("ws100");
+    OK(getFromSocket("/eval M2:set_workspace(101)"));
+    SPAWN_KITTY("ws101");
+
+    const auto workspaces = getFromSocket("/workspaces");
+    ASSERT_CONTAINS(workspaces, "workspace 100 (100) on monitor HEADLESS-3:");
+    ASSERT_CONTAINS(workspaces, "workspace 101 (101) on monitor HEADLESS-3:");
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-2' })"));
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "on monitor HEADLESS-2:");
+}
+
+SUBTEST(luaSetWorkspaceInactiveToFocused) {
+    NLog::log("{}Setting focused monitor 1 to a workspace currently inactive on monitor 2", Colors::YELLOW);
+
+    // steal workspace 100 from monitor 2
+    OK(getFromSocket("/eval M1:set_workspace(100)"));
+    ASSERT_CONTAINS(getFromSocket("/activewindow"), "class: ws100");
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 100 (100) on monitor HEADLESS-2:");
+
+    // should leave workspace 101 active on monitor 2
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-3' })"));
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 101 (101) on monitor HEADLESS-3:");
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-2' })"));
+}
+
+SUBTEST(luaSetWorkspaceActiveToFocused) {
+    NLog::log("{}Setting focused monitor 1 to a workspace currently active on monitor 2", Colors::YELLOW);
+
+    // steal workspace 101 from monitor 2
+    OK(getFromSocket("/eval M1:set_workspace(101)"));
+    ASSERT_CONTAINS(getFromSocket("/activewindow"), "class: ws101");
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 101 (101) on monitor HEADLESS-2:");
+
+    // should create workspace 2 on monitor 2
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-3' })"));
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 2 (2) on monitor HEADLESS-3:");
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-2' })"));
+}
+
+SUBTEST(luaSetWorkspaceInactiveToUnfocused) {
+    NLog::log("{}Setting unfocused monitor 2 to a workspace currently inactive on monitor 1", Colors::YELLOW);
+
+    // steal workspace 100 from monitor 1
+    OK(getFromSocket("/eval M2:set_workspace(100)"));
+    ASSERT_CONTAINS(getFromSocket("/activewindow"), "class: ws101");
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 101 (101) on monitor HEADLESS-2:");
+
+    // should make workspace 100 active on monitor 2
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-3' })"));
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 100 (100) on monitor HEADLESS-3:");
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-2' })"));
+}
+
+SUBTEST(luaSetWorkspaceActiveToUnfocused) {
+    NLog::log("{}Setting unfocused monitor 2 to a workspace currently active on monitor 1", Colors::YELLOW);
+
+    // steal workspace 101 from monitor 1
+    OK(getFromSocket("/eval M2:set_workspace(101)"));
+    ASSERT_CONTAINS(getFromSocket("/activewindow"), "class: ws1");
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 1 (1) on monitor HEADLESS-2:");
+
+    // should make workspace 101 active on monitor 2
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-3' })"));
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 101 (101) on monitor HEADLESS-3:");
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-2' })"));
+}
+
+SUBTEST(luaSetWorkspaceUnfocusedRelative) {
+    NLog::log("{}Setting unfocused monitor 2 via a relative workspace selector", Colors::YELLOW);
+
+    // relative workspace selector should be relative to the targeted monitor
+    OK(getFromSocket("/eval M2:set_workspace('m-1')"));
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-3' })"));
+    ASSERT_CONTAINS(getFromSocket("/activewindow"), "class: ws100");
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 100 (100) on monitor HEADLESS-3:");
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-2' })"));
+}
+
+TEST_CASE(luaSetWorkspace) {
+    // add a new monitor
+    NLog::log("{}Adding a new monitor", Colors::YELLOW);
+    ASSERT(getFromSocket("/output create headless HEADLESS-3"), "ok");
+
+    // should take workspace 2
+    {
+        auto str = getFromSocket("/monitors");
+        ASSERT_CONTAINS(str, "active workspace: 2 (2)");
+        ASSERT_CONTAINS(str, "active workspace: 1 (1)");
+        ASSERT_CONTAINS(str, "HEADLESS-3");
+    }
+
+    // plonk a recognizable window on the first monitor
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-2' })"));
+    SPAWN_KITTY("ws1");
+    {
+        auto str = getFromSocket("/activewindow");
+        ASSERT_CONTAINS(str, "monitor: 1");
+        ASSERT_CONTAINS(str, "workspace: 1 (1)");
+    }
+
+    // for use in subtests
+    OK(getFromSocket("/eval M1 = hl.get_monitors()[1]"));
+    OK(getFromSocket("/eval M2 = hl.get_monitors()[2]"));
+
+    // order very much matters for these
+    CALL_SUBTEST(luaSetWorkspaceCreate);
+    CALL_SUBTEST(luaSetWorkspaceInactiveToFocused);
+    CALL_SUBTEST(luaSetWorkspaceActiveToFocused);
+    CALL_SUBTEST(luaSetWorkspaceInactiveToUnfocused);
+    CALL_SUBTEST(luaSetWorkspaceActiveToUnfocused);
+    CALL_SUBTEST(luaSetWorkspaceUnfocusedRelative);
+
+    // clean up
+    Tests::killAllWindows();
+    OK(getFromSocket("/output remove HEADLESS-3"));
+}
+
+TEST_CASE(luaSetSpecialWorkspace) {
+    static constexpr const char* SECOND_MONITOR = "HEADLESS-3";
+
+    CScopeGuard                  guard = {[&]() {
+        if (getFromSocket("/monitors all").contains(SECOND_MONITOR))
+            getFromSocket(std::format("/output remove {}", SECOND_MONITOR));
+    }};
+
+    // add a new monitor
+    NLog::log("{}Adding a new monitor", Colors::YELLOW);
+    ASSERT(getFromSocket(std::format("/output create headless {}", SECOND_MONITOR)), "ok");
+    ASSERT(waitForMonitorListed(SECOND_MONITOR, true), true);
+
+    // should take workspace 2
+    {
+        auto str = getFromSocket("/monitors");
+        ASSERT_CONTAINS(str, "active workspace: 2 (2)");
+        ASSERT_CONTAINS(str, "active workspace: 1 (1)");
+        ASSERT_CONTAINS(str, "HEADLESS-3");
+    }
+
+    // for ease of access
+    OK(getFromSocket("/eval M1 = hl.get_monitor('HEADLESS-2')"));
+    OK(getFromSocket(std::format("/eval M2 = hl.get_monitor('{}')", SECOND_MONITOR)));
+
+    // special workspace with a window
+    NLog::log("{}Setting special workspace on active monitor", Colors::YELLOW);
+    OK(getFromSocket("/eval M1:set_special_workspace(1)"));
+    SPAWN_KITTY("a");
+    {
+        auto str = getFromSocket("/activewindow");
+        ASSERT(getFromSocket("/repl hl.get_active_window().monitor == M1"), "true");
+        ASSERT_CONTAINS(str, "workspace: special:1 (special:1)");
+    }
+
+    // new special workspace on unfocused monitor
+    NLog::log("{}Setting special workspace on inactive monitor", Colors::YELLOW);
+    OK(getFromSocket("/eval M2:set_special_workspace(2)"));
+    ASSERT_CONTAINS(getFromSocket("/workspaces"), "workspace special:2 (special:2) on monitor HEADLESS-3:");
+
+    // move focused special to unfocused monitor
+    NLog::log("{}Moving active special workspace to inactive monitor", Colors::YELLOW);
+    OK(getFromSocket("/eval M2:set_special_workspace(1)"));
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 1 (1) on monitor HEADLESS-2:");
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-3' })"));
+    {
+        auto str = getFromSocket("/activewindow");
+        ASSERT(getFromSocket("/repl hl.get_active_window().monitor == M2"), "true");
+        ASSERT_CONTAINS(str, "workspace: special:1 (special:1)");
+    }
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-2' })"));
+
+    // unset special workspace on unfocused monitor
+    NLog::log("{}Clearing special workspace on inactive monitor", Colors::YELLOW);
+    OK(getFromSocket("/eval M2:set_special_workspace(nil)"));
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-3' })"));
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 2 (2) on monitor HEADLESS-3:");
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-2' })"));
+
+    // clean up
+    Tests::killAllWindows();
+    OK(getFromSocket(std::format("/output remove {}", SECOND_MONITOR)));
+    ASSERT(waitForMonitorListed(SECOND_MONITOR, false), true);
+}
+
+TEST_CASE(workspacesDistinctTiledAndFloatGaps) {
+    OK(getFromSocket("/eval hl.workspace_rule({ workspace = 'name:workspacesDistinctTiledAndFloatGaps', gaps_out = 200, float_gaps = 10, no_border = true })"));
+    OK(getFromSocket("/eval hl.window_rule({ match = { workspace = 'name:workspacesDistinctTiledAndFloatGaps', class = 'workspacesDistinctTiledAndFloatGaps' }, float = true })"));
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 'name:workspacesDistinctTiledAndFloatGaps' })"));
+    SPAWN_KITTY("kitty");
+    ASSERT(getFromSocket("r/repl hl.get_active_window().at.x == 200"), "true");
+    SPAWN_KITTY("workspacesDistinctTiledAndFloatGaps");
+    OK(getFromSocket("/dispatch hl.dsp.window.move({ direction = 'l' })"));
+    ASSERT(getFromSocket("r/repl hl.get_active_window().at.x == 10"), "true");
+}
+
+SUBTEST(switchWorkspaceAndCheckActiveWindowFocusIsLostAndRestored) {
+    std::string resp1 = Tests::getWindowID(getFromSocket("/activewindow"));
+    ASSERT_NOT("Invalid", resp1);
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 2 })"));
+    std::string resp2 = getFromSocket("/activewindow");
+    EXPECT("Invalid", resp2);
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = \"previous\" })"));
+    resp2 = getFromSocket("/activewindow");
+    ASSERT(resp1, Tests::getWindowID(resp2));
+}
+
+TEST_CASE(workspaceSwitchUnfocusesWindowFromOldWorkspace) {
+    SPAWN_KITTY("a");
+    for (int followMouse = 0; followMouse <= 3; ++followMouse) {
+        NLog::blue("Setting follow_mouse = {}", followMouse);
+        OK(getFromSocket(std::format("/eval hl.config({{ input = {{ follow_mouse = {} }} }})", followMouse)));
+        CALL_SUBTEST(switchWorkspaceAndCheckActiveWindowFocusIsLostAndRestored);
+    }
+
+    Tests::killAllWindows();
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
+    OK(getFromSocket("/eval hl.workspace_rule({ workspace = '2', monitor = 'HEADLESS-1' })"));
+    OK(getFromSocket("/output create headless HEADLESS-1"));
+    CScopeGuard guard = {[this]() { OK(getFromSocket("/output remove HEADLESS-1")); }};
+
+    std::string resp = getFromSocket("/activeworkspace");
+    ASSERT_CONTAINS(resp, "workspace 1 (");
+    SPAWN_KITTY("a");
+    for (int followMouse = 0; followMouse <= 3; ++followMouse) {
+        NLog::blue("Setting follow_mouse = {}", followMouse);
+        OK(getFromSocket(std::format("/eval hl.config({{ input = {{ follow_mouse = {} }} }})", followMouse)));
+        CALL_SUBTEST(switchWorkspaceAndCheckActiveWindowFocusIsLostAndRestored);
+    }
+}
+
+TEST_CASE(luaFocusCreatesBareNamedWorkspace) {
+    ASSERT(getFromSocket("/repl hl.get_workspace('hi')"), "nil");
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 'hi' })"));
+    ASSERT_CONTAINS(getFromSocket("/activeworkspace"), "workspace hi (hi)");
+}
+
+TEST_CASE(workspaceOnCreatedEmpty) {
+    OK(getFromSocket("/eval hl.workspace_rule({ workspace = 2, on_created_empty = 'kitty' })"));
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 2 })"));
+    Tests::waitUntilWindowsN(1);
+    ASSERT(Tests::windowCount(), 1);
+}
+
+SUBTEST(workspaceCreateEventFocus) {
+    // switch to a new workspace
+    NLog::log("{}Focusing a new workspace", Colors::YELLOW);
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 2 })"));
+
+    // should have a kitty window appear on it
+    {
+        Tests::waitUntilWindowsN(1);
+        auto str = getFromSocket("/activeworkspace");
+        ASSERT_CONTAINS(str, "workspace 2 (2) on monitor HEADLESS-2:");
+        ASSERT_CONTAINS(str, "windows: 1");
+    }
+
+    // clean up
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 1 })"));
+    Tests::waitUntilWindowsN(2);
+    Tests::killAllWindows();
+}
+
+SUBTEST(workspaceCreateEventSilent) {
+    // spawn window to a new workspace, without focusing
+    NLog::log("{}Spawning window on a new workspace", Colors::YELLOW);
+    OK(getFromSocket("/dispatch hl.dsp.exec_cmd('kitty', { workspace = '2 silent' })"));
+
+    // should have a kitty window appear on it, and another from the event handler
+    {
+        Tests::waitUntilWindowsN(2);
+        auto str = getFromSocket("/workspaces");
+        ASSERT_CONTAINS(str, "workspace 2 (2) on monitor HEADLESS-2:");
+        ASSERT_CONTAINS(str, "windows: 2");
+    }
+
+    // clean up
+    Tests::killAllWindows();
+}
+
+SUBTEST(workspaceCreateEventSpecial) {
+    // create a special workspace
+    NLog::log("{}Focusing a special workspace", Colors::YELLOW);
+    OK(getFromSocket("/dispatch hl.dsp.workspace.toggle_special()"));
+
+    // should have a kitty window appear on it
+    {
+        Tests::waitUntilWindowsN(1);
+        int counter = 0;
+        while (getFromSocket("/repl hl.get_active_special_workspace().windows") != "1") {
+            counter++;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if (counter > 50) {
+                std::println("{}Timed out waiting for windows", Colors::RED);
+                MARK_TEST_FAILED_SILENT();
+                return;
+            }
+        }
+        LOG_OK("Got a window on special workspace{}", "");
+        ASSERT(getFromSocket("/repl hl.get_active_special_workspace().name"), "special:special");
+        ASSERT(getFromSocket("/repl hl.get_active_special_workspace().monitor.name"), "HEADLESS-2");
+    }
+
+    // clean up
+    OK(getFromSocket("/dispatch hl.dsp.workspace.toggle_special()"));
+    Tests::killAllWindows();
+}
+
+SUBTEST(workspaceCreateEventNewMonitor) {
+    static constexpr const char* SECOND_MONITOR = "HEADLESS-3";
+
+    // set up a persistent workspace on the second monitor
+    OK(getFromSocket(std::format("/eval rule = hl.workspace_rule({{ workspace = 'persistent', monitor = '{}', persistent = true }})", SECOND_MONITOR)));
+
+    // add a new monitor
+    NLog::log("{}Adding a new monitor", Colors::YELLOW);
+    OK(getFromSocket(std::format("/output create headless {}", SECOND_MONITOR)));
+
+    // each workspace should have a kitty window appear on it
+    {
+        Tests::waitUntilWindowsN(2);
+        auto str = getFromSocket("/workspaces");
+        ASSERT_CONTAINS(str, std::format("workspace 2 (2) on monitor {}:", SECOND_MONITOR));
+        ASSERT_CONTAINS(str, std::format("workspace persistent (persistent) on monitor {}:", SECOND_MONITOR));
+        ASSERT_COUNT_STRING(str, "windows: 1", 2);
+    }
+
+    // clean up
+    Tests::killAllWindows();
+    OK(getFromSocket("/eval rule:set_enabled(false)"));
+    OK(getFromSocket(std::format("/output remove {}", SECOND_MONITOR)));
+    ASSERT(waitForMonitorListed(SECOND_MONITOR, false), true);
+
+    // make sure removing the monitor didn't spawn a workspace and trigger the event
+    ASSERT(Tests::windowCount(), 0);
+}
+
+SUBTEST(workspaceCreateEventLuaMethods) {
+    // focus a new workspace with Lua
+    NLog::log("{}Setting normal workspace with Lua", Colors::YELLOW);
+    OK(getFromSocket("/eval hl.get_active_monitor():set_workspace(2)"));
+
+    // should have a kitty window appear on it
+    {
+        Tests::waitUntilWindowsN(1);
+        auto str = getFromSocket("/activeworkspace");
+        ASSERT_CONTAINS(str, "workspace 2 (2) on monitor HEADLESS-2:");
+        ASSERT_CONTAINS(str, "windows: 1");
+    }
+
+    // and a special workspace
+    NLog::log("{}Setting special workspace with Lua", Colors::YELLOW);
+    OK(getFromSocket("/eval hl.get_active_monitor():set_special_workspace('asdf')"));
+
+    // should have a kitty window appear on it
+    {
+        Tests::waitUntilWindowsN(2);
+        ASSERT(getFromSocket("/repl hl.get_active_special_workspace().addressable_name"), "special:asdf");
+        ASSERT(getFromSocket("/repl hl.get_active_special_workspace().windows"), "1");
+    }
+
+    // clean up
+    OK(getFromSocket("/eval hl.get_active_monitor():set_special_workspace(nil)"));
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 1 })"));
+    Tests::waitUntilWindowsN(3);
+    Tests::killAllWindows();
+}
+
+TEST_CASE(workspaceCreateEvents) {
+    // event handler to put a kitty instance on new workspaces
+    OK(getFromSocket("/eval hl.on('workspace.created', function(ws) hl.exec_cmd('kitty', { workspace = ws.addressable_name..' silent' }) end)"));
+
+    CALL_SUBTEST(workspaceCreateEventFocus);
+    CALL_SUBTEST(workspaceCreateEventSilent);
+    CALL_SUBTEST(workspaceCreateEventSpecial);
+    CALL_SUBTEST(workspaceCreateEventNewMonitor);
+    CALL_SUBTEST(workspaceCreateEventLuaMethods);
+}
+
+TEST_CASE(workspaceLastFocusedWindowRetention) {
+    // move to workspace `1`
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
+
+    // creates 2 tiled (T_1, T_2) and 2 floating (F_1, F_2) windows on the focused workspace
+    auto spawnWindows = [&]() {
+        SPAWN_KITTY("T_1");
+        SPAWN_KITTY("T_2");
+
+        SPAWN_KITTY("F_1");
+        OK(getFromSocket("/dispatch hl.dsp.window.float({ action = 'set', window = 'class:F_1' })"));
+        SPAWN_KITTY("F_2");
+        OK(getFromSocket("/dispatch hl.dsp.window.float({ action = 'set', window = 'class:F_2' })"));
+    };
+
+    // remember a point inside the window `cls` (call while its workspace is visible)
+    auto captureCursorTarget = [&](const std::string& cls) {
+        OK(getFromSocket(std::format("/eval local w = hl.get_window('class:^{}$'); _G.retention_cx = w.at.x + 10; _G.retention_cy = w.at.y + 10", cls)));
+    };
+
+    // put the cursor on the remembered point (call while on the other workspace)
+    auto moveCursorToTarget = [&]() { OK(getFromSocket("/dispatch hl.dsp.cursor.move({ x = _G.retention_cx, y = _G.retention_cy })")); };
+
+    spawnWindows();
+
+    // normal workspace <--> normal workspace
+
+    // tiled test: cursor ends up over T_2, T_1 must still be focused
+    OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:T_1' })"));
+    captureCursorTarget("T_2");
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '2' })"));
+    moveCursorToTarget();
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
+    EXPECT_CONTAINS(getFromSocket("/activewindow"), "class: T_1");
+
+    // floating test: cursor ends up over F_2, F_1 must still be focused
+    OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:F_1' })"));
+    captureCursorTarget("F_2");
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '2' })"));
+    moveCursorToTarget();
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
+    EXPECT_CONTAINS(getFromSocket("/activewindow"), "class: F_1");
+
+    // normal workspace <--> special workspace (windows stay on workspace 1)
+
+    // tiled test
+    OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:T_1' })"));
+    captureCursorTarget("T_2");
+    OK(getFromSocket("/dispatch hl.dsp.workspace.toggle_special('retention_a')"));
+    moveCursorToTarget();
+    OK(getFromSocket("/dispatch hl.dsp.workspace.toggle_special('retention_a')"));
+    EXPECT_CONTAINS(getFromSocket("/activewindow"), "class: T_1");
+
+    // floating test
+    OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:F_1' })"));
+    captureCursorTarget("F_2");
+    OK(getFromSocket("/dispatch hl.dsp.workspace.toggle_special('retention_a')"));
+    moveCursorToTarget();
+    OK(getFromSocket("/dispatch hl.dsp.workspace.toggle_special('retention_a')"));
+    EXPECT_CONTAINS(getFromSocket("/activewindow"), "class: F_1");
+
+    // special workspace <--> special workspace (windows live on special:retention_a)
+
+    // class names repeat, so get rid of the workspace 1 windows first
+    Tests::killAllWindows();
+    ASSERT(Tests::windowCount(), 0);
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 'special:retention_a' })"));
+    spawnWindows();
+
+    // tiled test
+    OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:T_1' })"));
+    captureCursorTarget("T_2");
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 'special:retention_b' })"));
+    moveCursorToTarget();
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 'special:retention_a' })"));
+    EXPECT_CONTAINS(getFromSocket("/activewindow"), "class: T_1");
+
+    // floating test
+    OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:F_1' })"));
+    captureCursorTarget("F_2");
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 'special:retention_b' })"));
+    moveCursorToTarget();
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 'special:retention_a' })"));
+    EXPECT_CONTAINS(getFromSocket("/activewindow"), "class: F_1");
+}
+
+TEST_CASE(workspaceShowWithoutFocussingMonitor) {
+    static constexpr const char* SECOND_MONITOR = "HEADLESS-3";
+
+    CScopeGuard                  guard = {[&]() {
+        if (getFromSocket("/monitors all").contains(SECOND_MONITOR))
+            getFromSocket(std::format("/output remove {}", SECOND_MONITOR));
+    }};
+
+    // add a new monitor
+    NLog::log("{}Adding a new monitor", Colors::YELLOW);
+    ASSERT(getFromSocket(std::format("/output create headless {}", SECOND_MONITOR)), "ok");
+    ASSERT(waitForMonitorListed(SECOND_MONITOR, true), true);
+
+    // Workspaces '10' and '11' are bound to 'HEADLESS-2' monitor.
+    OK(getFromSocket("/eval hl.workspace_rule({ workspace = '10', monitor = 'HEADLESS-2' })"));
+    OK(getFromSocket("/eval hl.workspace_rule({ workspace = '11', monitor = 'HEADLESS-2' })"));
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '10' })"));
+    SPAWN_KITTY("a");
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '11' })"));
+    SPAWN_KITTY("a");
+
+    OK(getFromSocket(std::format("/dispatch hl.dsp.focus({{ monitor = '{}' }})", SECOND_MONITOR)));
+
+    OK(getFromSocket("/dispatch hl.dsp.workspace.show({ workspace = '10' })"));
+    {
+        auto str = getFromSocket("/activeworkspace");
+        // Showing the workspace '10' should not focus 'HEADLESS-2'.
+        EXPECT_CONTAINS(str, SECOND_MONITOR);
+        EXPECT_NOT_CONTAINS(str, "workspace 10 (10)");
+    }
+
+    OK(getFromSocket("/dispatch hl.dsp.workspace.show({ workspace = '11' })"));
+    {
+        auto str = getFromSocket("/activeworkspace");
+        // Showing the workspace '11' should not focus 'HEADLESS-2'.
+        EXPECT_CONTAINS(str, SECOND_MONITOR);
+        EXPECT_NOT_CONTAINS(str, "workspace 11 (11)");
+    }
+
+    NLog::log("{}Killing all windows", Colors::YELLOW);
+    Tests::killAllWindows();
+    OK(getFromSocket(std::format("/output remove {}", SECOND_MONITOR)));
 }

@@ -2,6 +2,7 @@
 #include <cmath>
 #include <chrono>
 #include <filesystem>
+#include <format>
 #include <thread>
 #include <hyprutils/os/Process.hpp>
 #include <hyprutils/memory/WeakPtr.hpp>
@@ -32,7 +33,7 @@ static std::string spawnKittyActivating(const std::string& class_ = "kitty_activ
     (void)close(fd);
 
     const std::vector<std::string> args = {
-        "-o", "allow_remote_control=yes", "--", "/bin/sh", "-c", "while [ -f \"" + tmpFilename + "\" ]; do :; done; kitten @ focus-window; sleep infinity"};
+        "-o", "allow_remote_control=yes", "--", "/bin/sh", "-c", std::format("while [ -f \"{}\" ]; do :; done; kitten @ focus-window; sleep infinity", tmpFilename)};
 
     if (!Tests::spawnKitty(class_, args)) {
         NLog::red("Error: failed to spawn kitty");
@@ -57,13 +58,8 @@ TEST_CASE(swapWindow) {
     NLog::log("{}Switching to workspace \"swapwindow\"", Colors::YELLOW);
     getFromSocket("/dispatch hl.dsp.focus({ workspace = 'name:swapwindow' })");
 
-    if (!Tests::spawnKitty("kitty_A")) {
-        FAIL_TEST("Could not spawn kitty");
-    }
-
-    if (!Tests::spawnKitty("kitty_B")) {
-        FAIL_TEST("Could not spawn kitty");
-    }
+    SPAWN_KITTY("kitty_A");
+    SPAWN_KITTY("kitty_B");
 
     NLog::log("{}Expecting 2 windows", Colors::YELLOW);
     ASSERT(Tests::windowCount(), 2);
@@ -71,7 +67,7 @@ TEST_CASE(swapWindow) {
     // Test swapwindow by direction
     {
         getFromSocket("/dispatch hl.dsp.focus({ window = 'class:kitty_A' })");
-        auto pos = "at: " + Tests::getAttribute(getFromSocket("/activewindow"), "at");
+        auto pos = std::format("at: {}", Tests::getAttribute(getFromSocket("/activewindow"), "at"));
         NLog::log("{}Testing kitty_A {}, swapwindow with direction 'r'", Colors::YELLOW, pos);
 
         OK(getFromSocket("/dispatch hl.dsp.window.swap({ direction = 'right' })"));
@@ -83,7 +79,7 @@ TEST_CASE(swapWindow) {
     // Test swapwindow by class
     {
         getFromSocket("/dispatch hl.dsp.focus({ window = 'class:kitty_A' })");
-        auto pos = "at: " + Tests::getAttribute(getFromSocket("/activewindow"), "at");
+        auto pos = std::format("at: {}", Tests::getAttribute(getFromSocket("/activewindow"), "at"));
         NLog::log("{}Testing kitty_A {}, swapwindow with class:kitty_B", Colors::YELLOW, pos);
 
         OK(getFromSocket("/dispatch hl.dsp.window.swap({ target = 'class:kitty_B' })"));
@@ -97,7 +93,7 @@ TEST_CASE(swapWindow) {
         getFromSocket("/dispatch hl.dsp.focus({ window = 'class:kitty_B' })");
         auto addr = getWindowAddress(getFromSocket("/activewindow"));
         getFromSocket("/dispatch hl.dsp.focus({ window = 'class:kitty_A' })");
-        auto pos = "at: " + Tests::getAttribute(getFromSocket("/activewindow"), "at");
+        auto pos = std::format("at: {}", Tests::getAttribute(getFromSocket("/activewindow"), "at"));
         NLog::log("{}Testing kitty_A {}, swapwindow with address:0x{}(kitty_B)", Colors::YELLOW, pos, addr);
 
         OK(getFromSocket(std::format("/dispatch hl.dsp.window.swap({{ target = 'address:0x{}' }})", addr)));
@@ -120,13 +116,84 @@ TEST_CASE(swapWindow) {
     {
         getFromSocket("/dispatch hl.dsp.focus({ window = 'class:kitty_B' })");
         auto addr = getWindowAddress(getFromSocket("/activewindow"));
-        auto ws   = "workspace: " + Tests::getAttribute(getFromSocket("/activewindow"), "workspace");
+        auto ws   = std::format("workspace: {}", Tests::getAttribute(getFromSocket("/activewindow"), "workspace"));
         NLog::log("{}Sending address:0x{}(kitty_B) to workspace \"swapwindow2\"", Colors::YELLOW, addr);
 
         OK(getFromSocket("/dispatch hl.dsp.window.move({ workspace = 'name:swapwindow2', follow = false })"));
         OK(getFromSocket(std::format("/dispatch hl.dsp.window.swap({{ target = 'address:0x{}' }})", addr)));
         getFromSocket("/dispatch hl.dsp.focus({ window = 'class:kitty_B' })");
         EXPECT_CONTAINS(getFromSocket("/activewindow"), std::format("{}", ws));
+    }
+}
+
+TEST_CASE(swapFloatingTiledPreservesRestoreGeometry) {
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 'name:swap-restore' })"));
+    SPAWN_KITTY("kitty_A");
+    SPAWN_KITTY("kitty_B");
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:kitty_A' })"));
+    OK(getFromSocket("/dispatch hl.dsp.window.float({ action = 'set' })"));
+    OK(getFromSocket("/dispatch hl.dsp.window.resize({ x = 600, y = 400, relative = false })"));
+    OK(getFromSocket("/dispatch hl.dsp.window.move({ x = 150, y = 160, relative = false })"));
+    const auto BEFORE   = getFromSocket("/activewindow");
+    const auto POSITION = Tests::getAttribute(BEFORE, "at");
+    const auto SIZE     = Tests::getAttribute(BEFORE, "size");
+
+    // Exercise both argument orders: A floats first, then B floats on the return swap.
+    for (const auto* FLOATING_WINDOW : {"kitty_B", "kitty_A"}) {
+        const auto* TILED_WINDOW = std::string_view(FLOATING_WINDOW) == "kitty_B" ? "kitty_A" : "kitty_B";
+        OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:kitty_A' })"));
+        OK(getFromSocket("/dispatch hl.dsp.window.swap({ target = 'class:kitty_B' })"));
+        OK(getFromSocket(std::format("/dispatch hl.dsp.focus({{ window = 'class:{}' }})", TILED_WINDOW)));
+        EXPECT(Tests::getAttribute(getFromSocket("/activewindow"), "floating"), "0");
+        OK(getFromSocket(std::format("/dispatch hl.dsp.focus({{ window = 'class:{}' }})", FLOATING_WINDOW)));
+        EXPECT(Tests::getAttribute(getFromSocket("/activewindow"), "floating"), "1");
+
+        for (const auto* MODE : {"fullscreen", "maximized"}) {
+            OK(getFromSocket(std::format("/dispatch hl.dsp.window.fullscreen({{ mode = '{}', action = 'set' }})", MODE)));
+            EXPECT_NOT(Tests::getAttribute(getFromSocket("/activewindow"), "fullscreen"), "0");
+            OK(getFromSocket(std::format("/dispatch hl.dsp.window.fullscreen({{ mode = '{}', action = 'unset' }})", MODE)));
+            EXPECT(Tests::getAttribute(getFromSocket("/activewindow"), "fullscreen"), "0");
+            EXPECT(Tests::getAttribute(getFromSocket("/activewindow"), "at"), POSITION);
+            EXPECT(Tests::getAttribute(getFromSocket("/activewindow"), "size"), SIZE);
+        }
+    }
+}
+
+TEST_CASE(swapFloatingAcrossWorkspacesPreservesRestoreGeometry) {
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 'name:swap-restore-a' })"));
+    SPAWN_KITTY("kitty_A");
+    OK(getFromSocket("/dispatch hl.dsp.window.float({ action = 'set' })"));
+    OK(getFromSocket("/dispatch hl.dsp.window.resize({ x = 600, y = 400, relative = false })"));
+    OK(getFromSocket("/dispatch hl.dsp.window.move({ x = 150, y = 160, relative = false })"));
+    const auto WORKSPACE_A = Tests::getAttribute(getFromSocket("/activewindow"), "workspace");
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 'name:swap-restore-b' })"));
+    SPAWN_KITTY("kitty_B");
+    OK(getFromSocket("/dispatch hl.dsp.window.float({ action = 'set' })"));
+    OK(getFromSocket("/dispatch hl.dsp.window.resize({ x = 800, y = 500, relative = false })"));
+    OK(getFromSocket("/dispatch hl.dsp.window.move({ x = 350, y = 200, relative = false })"));
+    const auto WORKSPACE_B = Tests::getAttribute(getFromSocket("/activewindow"), "workspace");
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:kitty_A' })"));
+    OK(getFromSocket("/dispatch hl.dsp.window.swap({ target = 'class:kitty_B' })"));
+
+    for (const auto* WINDOW : {"kitty_A", "kitty_B"}) {
+        OK(getFromSocket(std::format("/dispatch hl.dsp.focus({{ window = 'class:{}' }})", WINDOW)));
+        const auto SWAPPED  = getFromSocket("/activewindow");
+        const auto POSITION = Tests::getAttribute(SWAPPED, "at");
+        const auto SIZE     = Tests::getAttribute(SWAPPED, "size");
+        EXPECT(Tests::getAttribute(SWAPPED, "workspace"), std::string_view(WINDOW) == "kitty_A" ? WORKSPACE_B : WORKSPACE_A);
+        EXPECT(Tests::getAttribute(SWAPPED, "floating"), "1");
+
+        for (const auto* MODE : {"fullscreen", "maximized"}) {
+            OK(getFromSocket(std::format("/dispatch hl.dsp.window.fullscreen({{ mode = '{}', action = 'set' }})", MODE)));
+            EXPECT_NOT(Tests::getAttribute(getFromSocket("/activewindow"), "fullscreen"), "0");
+            OK(getFromSocket(std::format("/dispatch hl.dsp.window.fullscreen({{ mode = '{}', action = 'unset' }})", MODE)));
+            EXPECT(Tests::getAttribute(getFromSocket("/activewindow"), "fullscreen"), "0");
+            EXPECT(Tests::getAttribute(getFromSocket("/activewindow"), "at"), POSITION);
+            EXPECT(Tests::getAttribute(getFromSocket("/activewindow"), "size"), SIZE);
+        }
     }
 }
 
@@ -137,18 +204,14 @@ TEST_CASE(windowGroupRules) {
     OK(getFromSocket("/eval hl.window_rule({ match = { workspace = 'w[tv1]' }, border_size = 0 })"));
     OK(getFromSocket("/eval hl.window_rule({ match = { workspace = 'f[1]' }, border_size = 0 })"));
 
-    if (!Tests::spawnKitty("kitty_A")) {
-        FAIL_TEST("Could not spawn kitty");
-    }
+    SPAWN_KITTY("kitty_A");
 
     {
         auto str = getFromSocket("/getprop active border_size");
         EXPECT_CONTAINS(str, "0");
     }
 
-    if (!Tests::spawnKitty("kitty_B")) {
-        FAIL_TEST("Could not spawn kitty");
-    }
+    SPAWN_KITTY("kitty_B");
 
     {
         auto str = getFromSocket("/getprop active border_size");
@@ -172,9 +235,7 @@ TEST_CASE(windowGroupRules) {
         EXPECT_CONTAINS(str, "0");
     }
 
-    if (!Tests::spawnKitty("kitty_C")) {
-        FAIL_TEST("Could not spawn kitty");
-    }
+    SPAWN_KITTY("kitty_C");
 
     OK(getFromSocket("/dispatch hl.dsp.window.move({ out_of_group = 'right' })"));
 
@@ -304,8 +365,8 @@ TEST_CASE(focusFloatingOrTilingUnderFullscreen) {
     OK(getFromSocket("/eval hl.config({ misc = { focus_on_activate = true } })"));
     OK(getFromSocket("/eval hl.config({ misc = { on_focus_under_fullscreen = 2 } })"));
 
-    ASSERT(!!Tests::spawnKitty("kitty_a"), true);
-    ASSERT(!!Tests::spawnKitty("kitty_b"), true);
+    SPAWN_KITTY("kitty_a");
+    SPAWN_KITTY("kitty_b");
 
     ASSERT(isActiveWindow("kitty_b", '0'), true);
     OK(getFromSocket("/dispatch hl.dsp.window.float({ action = 'set' })"));
@@ -542,6 +603,245 @@ TEST_CASE(pinnedWorkspacesValid) {
         EXPECT(str.contains("workspace: 1338"), true);
         EXPECT(str.contains("pinned: 0"), true);
     }
+}
+
+TEST_CASE(unpinOntoSpecialWorkspace) {
+    getFromSocket("/dispatch hl.dsp.focus({ workspace = '1339' })");
+
+    SPAWN_KITTY("kitty");
+
+    OK(getFromSocket("/dispatch hl.dsp.window.float({ action = 'set', window = 'class:kitty' })"));
+    OK(getFromSocket("/dispatch hl.dsp.window.pin({ action = 'enable', window = 'class:kitty' })"));
+    OK(getFromSocket("/dispatch hl.dsp.workspace.toggle_special('pinspecial')"));
+    OK(getFromSocket("/dispatch hl.dsp.window.pin({ action = 'disable', window = 'class:kitty' })"));
+
+    {
+        auto str = getFromSocket("/clients");
+        EXPECT(str.contains("special:pinspecial"), true);
+        EXPECT(str.contains("pinned: 0"), true);
+    }
+
+    OK(getFromSocket("/dispatch hl.dsp.workspace.toggle_special('pinspecial')"));
+}
+
+static std::string recordWindowStateUpdates() {
+    return getFromSocket(R"(/eval do
+        local state = { events = {}, subscriptions = {} }
+        _G.hyprtester_window_state = state
+        state.subscriptions.open = hl.on('window.open', function(window)
+            if window.class == 'hyprtester_window_state' then state.window = window end
+        end)
+        state.subscriptions.update = hl.on('window.update_state', function(window, delta)
+            if window.class ~= 'hyprtester_window_state' then return end
+            local valid = type(window) == 'userdata' and window == state.window and type(delta) == 'table'
+            if valid then
+                for key, value in pairs(delta) do
+                    valid = valid and (key == 'float' or key == 'pin') and type(value) == 'boolean'
+                end
+            end
+            if not valid then
+                table.insert(state.events, 'invalid')
+                return
+            end
+            table.insert(state.events, tostring(delta.float) .. ':' .. tostring(delta.pin))
+        end)
+    end)");
+}
+
+static std::string windowStateUpdates() {
+    // IPC round-trips let idle notifications drain, including when no event is expected.
+    Tests::sync();
+    return getFromSocket("/repl table.concat(_G.hyprtester_window_state.events, ',')");
+}
+
+static void cleanupWindowStateUpdates() {
+    getFromSocket(R"(/eval do
+        local state = _G.hyprtester_window_state
+        if state then
+            for _, subscription in pairs(state.subscriptions) do subscription:remove() end
+            if state.rule then state.rule:set_enabled(false) end
+        end
+        _G.hyprtester_window_state = nil
+    end)");
+    Tests::killAllWindows();
+}
+
+TEST_CASE(luaWindowUpdateStateDeltas) {
+    CScopeGuard cleanup(cleanupWindowStateUpdates);
+    OK(recordWindowStateUpdates());
+    SPAWN_KITTY("hyprtester_window_state");
+    SPAWN_KITTY("hyprtester_window_state_other");
+
+    OK(getFromSocket(R"(/eval do
+        local state = _G.hyprtester_window_state
+        assert(state.window == hl.get_window('class:^hyprtester_window_state$'))
+        assert(not state.window.floating and not state.window.pinned)
+        state.other = hl.get_window('class:^hyprtester_window_state_other$')
+        assert(state.other and state.other ~= state.window)
+    end)"));
+    ASSERT(windowStateUpdates(), "");
+
+    // Ignore another window's update, and target our window independently of focus.
+    OK(getFromSocket("/dispatch hl.dsp.window.float({ action = 'enable', window = _G.hyprtester_window_state.other })"));
+    ASSERT(windowStateUpdates(), "");
+    OK(getFromSocket("/dispatch hl.dsp.window.float({ action = 'toggle', window = _G.hyprtester_window_state.window })"));
+    ASSERT(windowStateUpdates(), "true:nil");
+
+    OK(getFromSocket("/dispatch hl.dsp.window.pin({ action = 'enable', window = _G.hyprtester_window_state.window })"));
+    ASSERT(windowStateUpdates(), "true:nil,nil:true");
+    OK(getFromSocket("/dispatch hl.dsp.window.pin({ action = 'disable', window = _G.hyprtester_window_state.window })"));
+    ASSERT(windowStateUpdates(), "true:nil,nil:true,nil:false");
+
+    // Setting the existing values must not report an empty delta.
+    OK(getFromSocket(R"(/eval do
+        local window = _G.hyprtester_window_state.window
+        assert(hl.dispatch(hl.dsp.window.float({ action = 'enable', window = window })).ok)
+        assert(hl.dispatch(hl.dsp.window.pin({ action = 'disable', window = window })).ok)
+    end)"));
+    ASSERT(windowStateUpdates(), "true:nil,nil:true,nil:false");
+
+    OK(getFromSocket("/dispatch hl.dsp.window.pin({ action = 'enable', window = _G.hyprtester_window_state.window })"));
+    ASSERT(windowStateUpdates(), "true:nil,nil:true,nil:false,nil:true");
+    // Tiling a pinned window reports both false values in one notification.
+    OK(getFromSocket("/dispatch hl.dsp.window.float({ action = 'toggle', window = _G.hyprtester_window_state.window })"));
+    ASSERT(windowStateUpdates(), "true:nil,nil:true,nil:false,nil:true,false:false");
+
+    // Only float differs from the last report: pin changes and reverts before idle.
+    OK(getFromSocket(R"(/eval do
+        local window = _G.hyprtester_window_state.window
+        assert(hl.dispatch(hl.dsp.window.float({ action = 'toggle', window = window })).ok)
+        assert(hl.dispatch(hl.dsp.window.pin({ action = 'enable', window = window })).ok)
+        assert(hl.dispatch(hl.dsp.window.pin({ action = 'disable', window = window })).ok)
+    end)"));
+    ASSERT(windowStateUpdates(), "true:nil,nil:true,nil:false,nil:true,false:false,true:nil");
+
+    // Both properties change and revert in a single eval: no notification at all.
+    OK(getFromSocket(R"(/eval do
+        local window = _G.hyprtester_window_state.window
+        assert(hl.dispatch(hl.dsp.window.float({ action = 'toggle', window = window })).ok)
+        assert(hl.dispatch(hl.dsp.window.float({ action = 'toggle', window = window })).ok)
+        assert(hl.dispatch(hl.dsp.window.pin({ action = 'enable', window = window })).ok)
+        assert(hl.dispatch(hl.dsp.window.pin({ action = 'disable', window = window })).ok)
+    end)"));
+    ASSERT(windowStateUpdates(), "true:nil,nil:true,nil:false,nil:true,false:false,true:nil");
+
+    // A reverted float change must be absent while a final pin change is retained.
+    OK(getFromSocket(R"(/eval do
+        local state = _G.hyprtester_window_state
+        assert(hl.dispatch(hl.dsp.window.float({ action = 'toggle', window = state.window })).ok)
+        assert(hl.dispatch(hl.dsp.window.float({ action = 'toggle', window = state.window })).ok)
+        assert(hl.dispatch(hl.dsp.window.pin({ action = 'enable', window = state.window })).ok)
+        assert(hl.dispatch(hl.dsp.window.float({ action = 'toggle', window = state.other })).ok)
+    end)"));
+    ASSERT(windowStateUpdates(), "true:nil,nil:true,nil:false,nil:true,false:false,true:nil,nil:true");
+}
+
+TEST_CASE(luaWindowUpdateStateCallbackMutation) {
+    CScopeGuard cleanup(cleanupWindowStateUpdates);
+    OK(recordWindowStateUpdates());
+    SPAWN_KITTY("hyprtester_window_state");
+
+    OK(getFromSocket(R"(/eval do
+        local state = _G.hyprtester_window_state
+        assert(not state.window.floating and not state.window.pinned)
+        state.callback_order = {}
+        state.mutated = false
+        state.subscriptions.change_on_update = hl.on('window.update_state', function(window, delta)
+            if window ~= state.window then return end
+            table.insert(state.callback_order, 'enter:' .. tostring(delta.float))
+            if delta.float == true and not state.mutated then
+                state.mutated = true
+                state.change_result = hl.dispatch(hl.dsp.window.float({ action = 'disable', window = window })).ok
+            end
+            table.insert(state.callback_order, 'leave:' .. tostring(delta.float))
+        end)
+    end)"));
+    ASSERT(windowStateUpdates(), "");
+
+    // The callback's reversion must compare against the just-delivered true baseline.
+    OK(getFromSocket("/dispatch hl.dsp.window.float({ action = 'enable', window = _G.hyprtester_window_state.window })"));
+    ASSERT(windowStateUpdates(), "true:nil,false:nil");
+
+    // Callback errors are swallowed: check successful dispatch and nonrecursive delivery externally.
+    ASSERT(getFromSocket("/repl _G.hyprtester_window_state.change_result"), "true");
+    ASSERT(getFromSocket("/repl table.concat(_G.hyprtester_window_state.callback_order, ',')"), "enter:true,leave:true,enter:false,leave:false");
+    ASSERT(getFromSocket("/repl _G.hyprtester_window_state.window.floating"), "false");
+}
+
+TEST_CASE(luaWindowUpdateStateFullscreenPin) {
+    CScopeGuard cleanup(cleanupWindowStateUpdates);
+    OK(recordWindowStateUpdates());
+    OK(getFromSocket(R"(/eval do
+        local state = _G.hyprtester_window_state
+        state.allow_pin_fullscreen = hl.get_config('binds:allow_pin_fullscreen')
+        assert(type(state.allow_pin_fullscreen) == 'boolean')
+    end)"));
+    CScopeGuard restoreConfig([this] { EXPECT_OK(getFromSocket("/eval hl.config({ binds = { allow_pin_fullscreen = _G.hyprtester_window_state.allow_pin_fullscreen } })")); });
+    OK(getFromSocket("/eval hl.config({ binds = { allow_pin_fullscreen = true } })"));
+
+    SPAWN_KITTY("hyprtester_window_state");
+    OK(getFromSocket(R"(/eval do
+        local window = _G.hyprtester_window_state.window
+        assert(hl.dispatch(hl.dsp.window.float({ action = 'enable', window = window })).ok)
+        assert(hl.dispatch(hl.dsp.window.pin({ action = 'enable', window = window })).ok)
+    end)"));
+    ASSERT(windowStateUpdates(), "true:true");
+
+    // Fullscreen implicitly clears and restores pin without changing float.
+    OK(getFromSocket("/dispatch hl.dsp.window.fullscreen({ mode = 'fullscreen', action = 'set', window = _G.hyprtester_window_state.window })"));
+    ASSERT(windowStateUpdates(), "true:true,nil:false");
+    ASSERT(getFromSocket("/repl _G.hyprtester_window_state.window.fullscreen"), "2");
+
+    OK(getFromSocket("/dispatch hl.dsp.window.fullscreen({ mode = 'fullscreen', action = 'unset', window = _G.hyprtester_window_state.window })"));
+    ASSERT(windowStateUpdates(), "true:true,nil:false,nil:true");
+    ASSERT(getFromSocket("/repl _G.hyprtester_window_state.window.fullscreen"), "0");
+}
+
+TEST_CASE(luaWindowUpdateStateLifecycle) {
+    CScopeGuard cleanup(cleanupWindowStateUpdates);
+    OK(recordWindowStateUpdates());
+    OK(getFromSocket(R"(/eval do
+        local state = _G.hyprtester_window_state
+        state.rule = hl.window_rule({ match = { class = '^hyprtester_window_state$' }, float = true, pin = true })
+        state.closed = 0
+        state.subscriptions.close = hl.on('window.close', function(window)
+            if window ~= state.window then return end
+            state.closed = state.closed + 1
+            state.close_result = hl.dispatch(hl.dsp.window.pin({ action = 'toggle', window = window })).ok
+        end)
+    end)"));
+
+    // Initial rule-applied float/pin state is a baseline, not an update.
+    SPAWN_KITTY("hyprtester_window_state");
+    OK(getFromSocket("/eval local window = _G.hyprtester_window_state.window; assert(window.floating and window.pinned)"));
+    ASSERT(windowStateUpdates(), "");
+
+    OK(getFromSocket("/dispatch hl.dsp.window.kill({ window = _G.hyprtester_window_state.window })"));
+    Tests::waitUntilWindowsN(0);
+    ASSERT(Tests::windowCount(), 0);
+    ASSERT(getFromSocket("/repl _G.hyprtester_window_state.closed"), "1");
+    ASSERT(getFromSocket("/repl _G.hyprtester_window_state.close_result"), "true");
+    ASSERT(windowStateUpdates(), "");
+
+    // The baseline must already exist when a window.open subscriber changes state.
+    OK(getFromSocket(R"(/eval do
+        local state = _G.hyprtester_window_state
+        state.subscriptions.change_on_open = hl.on('window.open', function(window)
+            if window.class ~= 'hyprtester_window_state' then return end
+            state.open_result = hl.dispatch(hl.dsp.window.pin({ action = 'disable', window = window })).ok
+        end)
+    end)"));
+    SPAWN_KITTY("hyprtester_window_state");
+    ASSERT(getFromSocket("/repl _G.hyprtester_window_state.open_result"), "true");
+    ASSERT(windowStateUpdates(), "nil:false");
+
+    // Even a mutation from window.close must not queue another update.
+    OK(getFromSocket("/dispatch hl.dsp.window.kill({ window = _G.hyprtester_window_state.window })"));
+    Tests::waitUntilWindowsN(0);
+    ASSERT(Tests::windowCount(), 0);
+    ASSERT(getFromSocket("/repl _G.hyprtester_window_state.closed"), "2");
+    ASSERT(getFromSocket("/repl _G.hyprtester_window_state.close_result"), "true");
+    ASSERT(windowStateUpdates(), "nil:false");
 }
 
 TEST_CASE(windowruleWorkspaceEmpty) {
@@ -962,22 +1262,6 @@ TEST_CASE(windows) {
 
     Tests::killAllWindows();
 
-    OK(getFromSocket("/eval hl.window_rule({ name = 'border-magic-kitty', match = { class = 'border_kitty' } })"));
-    OK(getFromSocket("/eval hl.window_rule({ name = 'border-magic-kitty', border_color = 'rgba(c6ff00ff) rgba(ff0000ee) 45deg' })"));
-
-    SPAWN_KITTY("border_kitty");
-
-    OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:border_kitty' })"));
-
-    {
-        auto str = getFromSocket("/getprop active active_border_color");
-        EXPECT_CONTAINS(str, "ffc6ff00");
-        EXPECT_CONTAINS(str, "eeff0000");
-        EXPECT_CONTAINS(str, "45deg");
-    }
-
-    Tests::killAllWindows();
-
     SPAWN_KITTY("tag_kitty");
 
     {
@@ -1171,7 +1455,7 @@ hl.window_rule({
 })
 )#"));
 
-    ASSERT(!!Tests::spawnKitty(), true);
+    SPAWN_KITTY("a");
 
     // just make sure smart gaps work
     {
@@ -1180,7 +1464,7 @@ hl.window_rule({
         ASSERT_CONTAINS(str, "at: 0,0");
     }
 
-    ASSERT(!!Tests::spawnKitty(), true);
+    SPAWN_KITTY("a");
 
     {
         auto str = getFromSocket("/clients");
@@ -1304,7 +1588,7 @@ TEST_CASE(execRulesPendingIsolation) {
 }
 
 TEST_CASE(pinnedRetainsPositionOnWorkspaceChange) {
-    ASSERT(!!Tests::spawnKitty("a"), true);
+    SPAWN_KITTY("a");
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
 
@@ -1322,14 +1606,14 @@ TEST_CASE(pinnedRetainsPositionOnWorkspaceChange) {
 
     {
         auto str = getFromSocket("/workspaces");
-        ASSERT_CONTAINS(str, "workspace ID 2");
+        ASSERT_CONTAINS(str, "workspace 2");
     }
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
 
     {
         auto str = getFromSocket("/workspaces");
-        ASSERT_CONTAINS(str, "workspace ID 1");
+        ASSERT_CONTAINS(str, "workspace 1");
     }
 
     {
@@ -1353,10 +1637,10 @@ TEST_CASE(monitorrule) {
     OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-2' })"));
     OK(getFromSocket("/eval hl.window_rule({ name = 'monitorrule', match = { class = 'monitor_kitty' }, monitor = 'HEADLESS-3' })"));
 
-    Tests::spawnKitty("monitor_kitty");
+    SPAWN_KITTY("monitor_kitty");
     ASSERT(Tests::windowCount(), 1);
     const auto MON_SRC_ID = Tests::getAttribute(getFromSocket("/activewindow"), "monitor");
-    ASSERT_CONTAINS(MONALL, "HEADLESS-3 (ID " + MON_SRC_ID);
+    ASSERT_CONTAINS(MONALL, std::format("HEADLESS-3 (ID {}", MON_SRC_ID));
     EXPECT_CONTAINS(getFromSocket("/activeworkspace"), "HEADLESS-3");
 
     Tests::killAllWindows();
@@ -1365,10 +1649,9 @@ TEST_CASE(monitorrule) {
     OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-2' })"));
     OK(getFromSocket("/eval hl.window_rule({ name = 'monitorrule', match = { class = 'silent_kitty' }, monitor = 'HEADLESS-3 silent' })"));
 
-    Tests::spawnKitty("silent_kitty");
-    ASSERT(Tests::windowCount(), 1);
+    SPAWN_KITTY("silent_kitty");
     const auto SILENT_SRC_ID = Tests::getAttribute(getFromSocket("/clients"), "monitor");
-    ASSERT_CONTAINS(MONALL, "HEADLESS-3 (ID " + SILENT_SRC_ID);
+    ASSERT_CONTAINS(MONALL, std::format("HEADLESS-3 (ID {}", SILENT_SRC_ID));
     EXPECT_CONTAINS(getFromSocket("/activeworkspace"), "HEADLESS-2");
 }
 
@@ -1383,7 +1666,7 @@ TEST_CASE(mouseResize) {
     EXPECT_CONTAINS(getFromSocket("/clients"), "at: 0,0");
 
     OK(getFromSocket("/eval hl.window_rule({ match = { class = 'kitty' }, float = true })"));
-    Tests::spawnKitty();
+    SPAWN_KITTY("kitty");
     ASSERT(Tests::windowCount(), 1);
     OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:kitty' })"));
 
@@ -1431,7 +1714,7 @@ TEST_CASE(getFullscreenHandler) {
     OK(getFromSocket("r/eval hl.config({ general = { layout = 'dwindle' } })"));
 
     // Tiled
-    Tests::spawnKitty("cat");
+    SPAWN_KITTY("cat");
 
     // FS - check - unFS
     OK(getFromSocket("/dispatch hl.dsp.window.fullscreen()"));
@@ -1499,7 +1782,7 @@ TEST_CASE(sendFsWindowToAnotherWorkspace) {
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
 
-    Tests::spawnKitty("traveller_1");
+    SPAWN_KITTY("traveller_1");
 
     // Testing with Tiled window
 
@@ -1594,7 +1877,7 @@ TEST_CASE(sendFsWindowToAnotherWorkspace) {
     Tests::waitUntilWindowsN(0);
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
-    Tests::spawnKitty("traveller_2");
+    SPAWN_KITTY("traveller_2");
 
     // Testing Maximised
 
@@ -1683,7 +1966,7 @@ TEST_CASE(sendFsWindowToAnotherWorkspace) {
     Tests::waitUntilWindowsN(0);
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
-    Tests::spawnKitty("traveller_3");
+    SPAWN_KITTY("traveller_3");
 
     /*
     Test Layout Handled FS - Move btw scroll-scroll and scroll-dwindle
@@ -1755,8 +2038,8 @@ TEST_CASE(sendFsWindowToAnotherWorkspace) {
     // scroll
     {
         const auto str = getFromSocket("/activewindow");
-        ASSERT_CONTAINS(str, "at: 2,2");
-        ASSERT_CONTAINS(str, "size: 1916,1076");
+        ASSERT_CONTAINS(str, "at: 7,2");
+        ASSERT_CONTAINS(str, "size: 1906,1076");
         ASSERT_CONTAINS(str, "workspace: 4");
         ASSERT_CONTAINS(str, "fullscreen: 1");
         ASSERT_CONTAINS(str, "fullscreenClient: 1");
@@ -1767,8 +2050,8 @@ TEST_CASE(sendFsWindowToAnotherWorkspace) {
     OK(getFromSocket("/dispatch hl.dsp.window.move({ workspace = '5' })"));
     {
         const auto str = getFromSocket("/activewindow");
-        ASSERT_CONTAINS(str, "at: 2,2");
-        ASSERT_CONTAINS(str, "size: 1916,1076");
+        ASSERT_CONTAINS(str, "at: 7,2");
+        ASSERT_CONTAINS(str, "size: 1906,1076");
         ASSERT_CONTAINS(str, "workspace: 5");
         ASSERT_CONTAINS(str, "fullscreen: 1");
         ASSERT_CONTAINS(str, "fullscreenClient: 1");
@@ -1811,7 +2094,7 @@ TEST_CASE(sendFsWindowToAnotherWorkspace) {
     Tests::waitUntilWindowsN(0);
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
-    Tests::spawnKitty("traveller_float");
+    SPAWN_KITTY("traveller_float");
     OK(getFromSocket("/dispatch hl.dsp.window.float({ action = 'set', window = 'class:traveller_float' })"));
 
     OK(getFromSocket("/dispatch hl.dsp.window.fullscreen({mode = 'fullscreen'})"));
@@ -1942,4 +2225,363 @@ TEST_CASE(sendFsWindowToAnotherWorkspace) {
         ASSERT_CONTAINS(str, "fullscreenHandler: default");
         ASSERT_CONTAINS(str, "floating: 1");
     }
+}
+
+TEST_CASE(floatingForceOnscreen) {
+    // Test: move a floating window around
+    NLog::log("{}Testing force-onscreen for existing floating windows", Colors::GREEN);
+    SPAWN_KITTY("a");
+    OK(getFromSocket("/dispatch hl.dsp.window.float({ action = 'on' })"));
+    OK(getFromSocket("/dispatch hl.dsp.window.resize({ x = 100, y = 100, relative = false })"));
+
+    // No constraints
+    OK(getFromSocket("/eval hl.config({ misc = { float_force_onscreen = 0 }})"));
+    OK(getFromSocket("/dispatch hl.dsp.window.move({ x = -110, y = 0, relative = false })"));
+    ASSERT_CONTAINS(getFromSocket("/activewindow"), "at: -110,0");
+
+    // Partially onscreen
+    OK(getFromSocket("/eval hl.config({ misc = { float_force_onscreen = 1 }})"));
+    OK(getFromSocket("/dispatch hl.dsp.window.move({ x = -110, y = 0, relative = false })"));
+    ASSERT_CONTAINS(getFromSocket("/activewindow"), "at: -50,0");
+
+    // Fully onscreen
+    OK(getFromSocket("/eval hl.config({ misc = { float_force_onscreen = 2 }})"));
+    OK(getFromSocket("/dispatch hl.dsp.window.move({ x = -10, y = 0, relative = false })"));
+    ASSERT_CONTAINS(getFromSocket("/activewindow"), "at: 2,2");
+
+    OK(getFromSocket("/dispatch hl.dsp.window.kill()"));
+
+    // Test: spawn new floating windows offscreen
+    // NOTE: These new-window tests all run with float_force_onscreen = 2.
+    // That's intended, and it shouldn't limit where new windows can spawn.
+    NLog::log("{}Testing force-onscreen for new floating windows", Colors::GREEN);
+
+    // Helper macro, because spawnKitty() doesn't support executing with rules
+#define WAIT_FOR_WINDOW(N)                                                                                                                                                         \
+    do {                                                                                                                                                                           \
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));                                                                                                                \
+        int counter = 0;                                                                                                                                                           \
+        while (Tests::windowCount() == N) {                                                                                                                                        \
+            counter++;                                                                                                                                                             \
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));                                                                                                           \
+            if (counter > 50)                                                                                                                                                      \
+                break;                                                                                                                                                             \
+        }                                                                                                                                                                          \
+    } while (0)
+
+    // No constraints
+    OK(getFromSocket("/eval hl.config({ misc = { new_float_force_onscreen = 0 }})"));
+    OK(getFromSocket("/dispatch hl.dsp.exec_cmd('kitty', { float = true, size = {100, 100}, move = {-110, 0} })"));
+    WAIT_FOR_WINDOW(0);
+    ASSERT_CONTAINS(getFromSocket("/activewindow"), "at: -110,0");
+    OK(getFromSocket("/dispatch hl.dsp.window.kill()"));
+
+    // Partially onscreen
+    OK(getFromSocket("/eval hl.config({ misc = { new_float_force_onscreen = 1 }})"));
+    OK(getFromSocket("/dispatch hl.dsp.exec_cmd('kitty', { float = true, size = {100, 100}, move = {-110, 0} })"));
+    WAIT_FOR_WINDOW(0);
+    ASSERT_CONTAINS(getFromSocket("/activewindow"), "at: -50,0");
+    OK(getFromSocket("/dispatch hl.dsp.window.kill()"));
+
+    // Fully onscreen
+    OK(getFromSocket("/eval hl.config({ misc = { new_float_force_onscreen = 2 }})"));
+    OK(getFromSocket("/dispatch hl.dsp.exec_cmd('kitty', { float = true, size = {100, 100}, move = {-10, 0} })"));
+    WAIT_FOR_WINDOW(0);
+    // NOTE: As we spawn with rules, apparently border_size isn't known yet, so
+    // we get placed at (0,0) rather than (2,2)
+    ASSERT_CONTAINS(getFromSocket("/activewindow"), "at: 0,0");
+    OK(getFromSocket("/dispatch hl.dsp.window.kill()"));
+
+#undef WAIT_FOR_WINDOW
+}
+
+TEST_CASE(specialWorkspacePinnedWindowUnmapFallback) {
+    // Test: check if focus falls back to the active special workspace when a pinned window is unmapped
+    NLog::log("{}Testing special workspace focus fallback on unmap for pinned windows", Colors::GREEN);
+
+    Tests::killAllWindows();
+    ASSERT(Tests::windowCount(), 0);
+
+    // Open a window in a workspace
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1'})"));
+    SPAWN_KITTY("kitty_normal");
+
+    // Open another window and convert it to a pinned window
+    SPAWN_KITTY("kitty_pinned");
+    OK(getFromSocket("/dispatch hl.dsp.window.float({ action = 'set', window = 'class:kitty_pinned' })"));
+    OK(getFromSocket("/dispatch hl.dsp.window.pin({ action = 'set', window = 'class:kitty_pinned' })"));
+
+    // Switch to special workspace
+    OK(getFromSocket("/dispatch hl.dsp.workspace.toggle_special('fallback')"));
+
+    // Open kitty in special workspace
+    SPAWN_KITTY("kitty_sp_normal");
+
+    Tests::waitUntilWindowsN(3);
+
+    // Kill the pinned window
+    OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:kitty_pinned' })"));
+    OK(getFromSocket("/dispatch hl.dsp.window.kill({ window = 'activewindow' })"));
+    Tests::waitUntilWindowsN(2);
+
+    // Check if special workspace is still active
+    const auto active = getFromSocket("/activewindow");
+    EXPECT_CONTAINS(active, "(special:fallback)");
+
+    OK(getFromSocket("/dispatch hl.dsp.workspace.toggle_special('fallback')"));
+    Tests::killAllWindows();
+}
+
+TEST_CASE(windowRuleBorderColors) {
+    // Setting global border colors to check against
+    OK(getFromSocket("/eval hl.config({ general = { col = { active_border = { colors = { 'rgba(00ff00ff)', 'rgba(ffffffff)' }, angle = 45 } } } })"));
+    OK(getFromSocket("/eval hl.config({ general = { col = { inactive_border = { colors = { 'rgba(ff0000ff)', 'rgba(ffffffff)' }, angle = 45 } } } })"));
+
+    // Testing setting both colors with no gradient
+    OK(getFromSocket("/eval hl.window_rule({ name = 'border-kitty', match = { class = 'border_color_kitty' }, border_color = 'rgba(ffff00ff) rgba(000000ff)' })"));
+
+    SPAWN_KITTY("border_color_kitty");
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:border_color_kitty' })"));
+
+    {
+        auto str = getFromSocket("/getprop active active_border_color");
+        EXPECT_CONTAINS(str, "ffffff00");
+    }
+
+    {
+        auto str = getFromSocket("/getprop active inactive_border_color");
+        EXPECT_CONTAINS(str, "ff000000");
+    }
+
+    Tests::killAllWindows();
+
+    // Testing setting only the active border
+    OK(getFromSocket(
+        "/eval hl.window_rule({ name = 'active-border-kitty', match = { class = 'active_border_kitty', focus = true }, border_color = 'rgba(ffff00ff) rgba(000000ff) 90deg' })"));
+
+    SPAWN_KITTY("active_border_kitty");
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:active_border_kitty' })"));
+
+    {
+        auto str = getFromSocket("/getprop active active_border_color");
+        EXPECT_CONTAINS(str, "ffffff00");
+        EXPECT_CONTAINS(str, "ff000000");
+        EXPECT_CONTAINS(str, "90deg");
+    }
+
+    // We expect the inactive color to be the global one
+    {
+        auto str = getFromSocket("/getprop active inactive_border_color");
+        EXPECT_CONTAINS(str, "ffff0000");
+        EXPECT_CONTAINS(str, "ffffffff");
+        EXPECT_CONTAINS(str, "45deg");
+    }
+
+    Tests::killAllWindows();
+
+    // Testing setting only the inactive border
+    OK(getFromSocket("/eval hl.window_rule({ name = 'inactive-border-kitty', match = { class = 'inactive_border_kitty', focus = false }, border_color = '0deg rgba(ffff00ff) "
+                     "rgba(000000ff) 90deg' })"));
+
+    SPAWN_KITTY("inactive_border_kitty");
+    // dummy window to check inactive colors
+    SPAWN_KITTY("dummy_kitty");
+
+    // We expect the active color to be the global one
+    OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:inactive_border_kitty' })"));
+
+    {
+        auto str = getFromSocket("/getprop active active_border_color");
+        EXPECT_CONTAINS(str, "ff00ff00");
+        EXPECT_CONTAINS(str, "ffffffff");
+        EXPECT_CONTAINS(str, "45deg");
+    }
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:dummy_kitty' })"));
+
+    {
+        auto str = getFromSocket("/getprop class:inactive_border_kitty inactive_border_color");
+        EXPECT_CONTAINS(str, "ffffff00");
+        EXPECT_CONTAINS(str, "ff000000");
+        EXPECT_CONTAINS(str, "90deg");
+    }
+
+    Tests::killAllWindows();
+
+    // setting both colors
+    OK(getFromSocket("/eval hl.window_rule({ name = 'border-color-kitty', match = { class = 'border_color_kitty' }, border_color = 'rgba(ffff00ff) rgba(000000ff) 90deg "
+                     "rgba(0000ffff) rgba(ff0000ff) 90deg' })"));
+
+    SPAWN_KITTY("border_color_kitty");
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:border_color_kitty' })"));
+
+    {
+        auto str = getFromSocket("/getprop active active_border_color");
+        EXPECT_CONTAINS(str, "ffffff00");
+        EXPECT_CONTAINS(str, "ff000000");
+        EXPECT_CONTAINS(str, "90deg");
+    }
+
+    {
+        auto str = getFromSocket("/getprop active inactive_border_color");
+        EXPECT_CONTAINS(str, "ff0000ff");
+        EXPECT_CONTAINS(str, "ffff0000");
+        EXPECT_CONTAINS(str, "90deg");
+    }
+}
+
+TEST_CASE(windowRuleBorderColorsFocus) {
+    // Setting global border colors to check against
+    OK(getFromSocket("/eval hl.config({ general = { col = { active_border = { colors = { 'rgba(00ff00ff)', 'rgba(ffffffff)' }, angle = 45 } } } })"));
+    OK(getFromSocket("/eval hl.config({ general = { col = { inactive_border = { colors = { 'rgba(ff0000ff)', 'rgba(ffffffff)' }, angle = 45 } } } })"));
+
+    // Testing setting only the active border
+    OK(getFromSocket("/eval hl.window_rule({ name = 'active-border-kitty', match = { class = 'active_border_kitty', focus = true }, border_color = { colors = {'rgba(ff00ffff)', "
+                     "'rgba(000000ff)' }, angle = 90 } })"));
+
+    SPAWN_KITTY("active_border_kitty");
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:active_border_kitty' })"));
+
+    {
+        auto str = getFromSocket("/getprop active active_border_color");
+        EXPECT_CONTAINS(str, "ffff00ff");
+        EXPECT_CONTAINS(str, "ff000000");
+        EXPECT_CONTAINS(str, "90deg");
+    }
+
+    // We expect the inactive color to be the global one
+    {
+        auto str = getFromSocket("/getprop active inactive_border_color");
+        EXPECT_CONTAINS(str, "ffff0000");
+        EXPECT_CONTAINS(str, "ffffffff");
+        EXPECT_CONTAINS(str, "45deg");
+    }
+
+    Tests::killAllWindows();
+
+    // Testing setting only the inactive border
+    OK(getFromSocket("/eval hl.window_rule({ name = 'inactive-border-kitty', match = { class = 'inactive_border_kitty', focus = false }, border_color = { colors = { "
+                     "'rgba(ffff00ff)', 'rgba(000000ff)' }, angle = 90 } })"));
+
+    SPAWN_KITTY("inactive_border_kitty");
+    // dummy window to check inactive colors
+    SPAWN_KITTY("dummy_kitty");
+
+    // We expect the active color to be the global one
+    OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:inactive_border_kitty' })"));
+
+    {
+        auto str = getFromSocket("/getprop active active_border_color");
+        EXPECT_CONTAINS(str, "ff00ff00");
+        EXPECT_CONTAINS(str, "ffffffff");
+        EXPECT_CONTAINS(str, "45deg");
+    }
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:dummy_kitty' })"));
+
+    {
+        auto str = getFromSocket("/getprop class:inactive_border_kitty inactive_border_color");
+        EXPECT_CONTAINS(str, "ffffff00");
+        EXPECT_CONTAINS(str, "ff000000");
+        EXPECT_CONTAINS(str, "90deg");
+    }
+
+    Tests::killAllWindows();
+}
+
+TEST_CASE(floatingMoveExpression) {
+    OK(getFromSocket("/eval hl.window_rule({ match = { class = 'kitty_floatingmove' }, "
+                     "float = true, size = { 800, 600 }, "
+                     "move = { '(monitor_w-window_w-10)', '(monitor_h-window_h-10)' } })"));
+
+    SPAWN_KITTY("kitty_floatingmove");
+
+    Tests::waitUntilWindowsN(1);
+
+    const auto EXPECTED_AT = getFromSocket("/repl local m = hl.get_active_monitor();"
+                                           "return (m.x + m.width - 800 - 10) .. ',' "
+                                           ".. (m.y + m.height - 600 - 10)");
+
+    {
+        auto str = getFromSocket("/activewindow");
+        EXPECT_CONTAINS(str, "floating: 1");
+        EXPECT_CONTAINS(str, std::format("size: {},{}", 800, 600));
+        EXPECT_CONTAINS(str, std::format("at: {}", EXPECTED_AT));
+    }
+
+    Tests::killAllWindows();
+}
+
+TEST_CASE(newFullscreenWindowReceivesCursorFocus) {
+    NLog::red("This functionality seems broken. Skipping test");
+    return;
+
+    // Bash command that will terminate on mouse input event
+    std::vector<std::string> waitMouseEventCmd = {"bash", "-c", R"(echo -e '\e[?1000h'; read -n 1)"};
+
+    // SPAWN_KITTY("kittyA", waitMouseEventCmd);
+    SPAWN_KITTY("kittyA");
+    auto str = getFromSocket("/activewindow");
+    ASSERT_CONTAINS(str, "class: kittyA\n");
+    ASSERT_CONTAINS(str, "fullscreen: 0\n");
+
+    // Opens fullscreen and terminates on mouse input event
+    OK(getFromSocket("/eval hl.exec_cmd(\"kitty --class kittyB bash -c \\\"echo -e '\\\\e[?1000h'; read -n 1\\\"\", { fullscreen = true })"));
+    Tests::waitUntilWindowsN(2);
+    str = getFromSocket("/activewindow");
+    ASSERT_CONTAINS(str, "class: kittyB\n");
+    ASSERT_CONTAINS(str, "fullscreen: 2\n");
+
+    // Since kittyB is active, it should receive the mouse input (and, subseqeuntly, terminate)
+    OK(getFromSocket("/dispatch hl.dsp.send_shortcut({ mods = '', key = 'mouse:272' })"));
+    Tests::waitUntilWindowsN(1);
+    str = getFromSocket("/activewindow");
+    ASSERT_CONTAINS(str, "class: kittyA\n");
+}
+
+TEST_CASE(windowGoesFullscreenAndReceivesCursorFocus) {
+    NLog::red("This functionality seems broken. Skipping test");
+    return;
+
+    // Bash command that will terminate on mouse input event
+    std::vector<std::string> waitMouseEventCmd = {"bash", "-c", R"(echo -e '\e[?1000h'; read -n 1)"};
+
+    SPAWN_KITTY("kittyA", waitMouseEventCmd);
+    SPAWN_KITTY("kittyB", waitMouseEventCmd);
+    // Focus A and warp cursor to it
+    OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:kittyA' })"));
+    // Make B fullscreen
+    OK(getFromSocket("/dispatch hl.dsp.window.fullscreen({ mode = 'fullscreen', action = 'set', window = 'class:kittyB' })"));
+
+    auto str = getFromSocket("/activewindow");
+    ASSERT_CONTAINS(str, "class: kittyB\n");
+    // Since kittyB is active, it should receive the mouse input (and, subseqeuntly, terminate)
+    OK(getFromSocket("/dispatch hl.dsp.send_shortcut({ mods = '', key = 'mouse:272' })"));
+    Tests::waitUntilWindowsN(1);
+    str = getFromSocket("/activewindow");
+    ASSERT_CONTAINS(str, "class: kittyA\n");
+}
+
+TEST_CASE(windowThatGoesFullscreenBecomesActive) {
+    NLog::red("This functionality seems broken. Skipping test");
+    return;
+
+    SPAWN_KITTY("kittyA");
+    SPAWN_KITTY("kittyB");
+
+    auto str = getFromSocket("/activewindow");
+    ASSERT_CONTAINS(str, "class: kittyB\n");
+    EXPECT_CONTAINS(str, "fullscreen: 0\n");
+
+    // kittyA goes to fullscreen
+    OK(getFromSocket("/dispatch hl.dsp.window.fullscreen({ mode = 'fullscreen', action = 'set', window = 'class:kittyA' })"));
+
+    // It should be active now
+    str = getFromSocket("/activewindow");
+    ASSERT_CONTAINS(str, "class: kittyA\n");
+    EXPECT_CONTAINS(str, "fullscreen: 2\n");
 }

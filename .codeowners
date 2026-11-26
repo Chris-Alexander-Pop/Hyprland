@@ -8,3 +8,9 @@
 
 # Hyprtester (framework): CC @kolayne
 ? hyprtester/src/* @kolayne
+
+# Fullscreen (framework and implementation): CC @erstarr
+src/managers/fullscreen/** @erstarr
+
+# Scrolling Layout (framework and implementation): CC @erstarr
+src/layout/algorithm/tiled/scrolling/** @erstarr

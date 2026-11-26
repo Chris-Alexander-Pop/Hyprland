@@ -24,6 +24,16 @@ void CLogger::log(Hyprutils::CLI::eLogLevel level, const std::string_view& str) 
     m_logger.log(level, str);
 }
 
+void CLogger::log(Hyprutils::CLI::eLogLevel level, const std::string_view loc, const std::string_view str) {
+    if (!m_logsEnabled)
+        return;
+
+    if (level == Hyprutils::CLI::LOG_TRACE && !m_isTrace)
+        return;
+
+    log(level, std::format("[{}] {}", loc, str));
+}
+
 void CLogger::initIS(const std::string_view& IS) {
     // NOLINTNEXTLINE
     m_logger.setOutputFile(std::string{IS} + (ISDEBUG ? "/hyprlandd.log" : "/hyprland.log"));
@@ -39,10 +49,10 @@ void CLogger::initCallbacks() {
 }
 
 void CLogger::recheckCfg() {
-    static auto PDISABLELOGS  = CConfigValue<Config::INTEGER>("debug:disable_logs");
-    static auto PDISABLETIME  = CConfigValue<Config::INTEGER>("debug:disable_time");
-    static auto PENABLESTDOUT = CConfigValue<Config::INTEGER>("debug:enable_stdout_logs");
-    static auto PENABLECOLOR  = CConfigValue<Config::INTEGER>("debug:colored_stdout_logs");
+    static auto PDISABLELOGS  = CConfigValue<Config::BOOL>("debug:disable_logs");
+    static auto PDISABLETIME  = CConfigValue<Config::BOOL>("debug:disable_time");
+    static auto PENABLESTDOUT = CConfigValue<Config::BOOL>("debug:enable_stdout_logs");
+    static auto PENABLECOLOR  = CConfigValue<Config::BOOL>("debug:colored_stdout_logs");
 
     m_logger.setEnableStdout(!*PDISABLELOGS && *PENABLESTDOUT);
     m_logsEnabled = !*PDISABLELOGS;

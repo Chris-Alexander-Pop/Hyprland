@@ -80,6 +80,7 @@ namespace Layout::Tiled {
         bool                         visible(SP<SColumnData> c, bool full = false);
         void                         centerCol(SP<SColumnData> c);
         void                         fitCol(SP<SColumnData> c);
+        void                         clampedCenterCol(SP<SColumnData> c);
         void                         centerOrFitCol(SP<SColumnData> c);
 
         void                         recalculate(bool forceInstant = false);
@@ -121,6 +122,8 @@ namespace Layout::Tiled {
 
         double                                     primaryViewportSize();
         double                                     normalizedTapeOffset();
+
+        double                                     getScrollingTapeOffset();
 
         CBox                                       usableArea() const;
         SP<SScrollingTargetData>                   dataFor(SP<ITarget> t, bool stepIntoGroups = false) const;

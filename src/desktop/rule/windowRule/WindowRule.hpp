@@ -5,6 +5,7 @@
 #include "../../types/OverridableVar.hpp"
 #include "WindowRuleEffectContainer.hpp"
 #include "../../../config/shared/complex/ComplexDataTypes.hpp"
+#include "../../../config/shared/complex/CornersData.hpp"
 #include "../../../helpers/math/Expression.hpp"
 #include "../../../helpers/math/Math.hpp"
 
@@ -27,12 +28,12 @@ namespace Desktop::Rule {
     };
 
     struct SBorderColorRule {
-        Config::CGradientValueData                active;
+        std::optional<Config::CGradientValueData> active;
         std::optional<Config::CGradientValueData> inactive;
     };
 
-    using WindowRuleEffectValue =
-        std::variant<std::monostate, bool, int64_t, float, std::string, std::vector<std::string>, SFullscreenStateRule, SOpacityRule, SBorderColorRule, Math::SExpressionVec2>;
+    using WindowRuleEffectValue = std::variant<std::monostate, bool, int64_t, float, std::string, std::vector<std::string>, SFullscreenStateRule, SOpacityRule, SBorderColorRule,
+                                               Math::SExpressionVec2, Config::CCornersData>;
 
     struct SWindowRuleEffect {
         using storageType = CWindowRuleEffectContainer::storageType;
@@ -63,6 +64,8 @@ namespace Desktop::Rule {
         std::expected<void, std::string>                   addEffect(storageType e, const Math::SExpressionVec2& expr);
 
         bool                                               matches(PHLWINDOW w, bool allowEnvLookup = false);
+        bool                                               matches(Desktop::Rule::eRuleProperty p, const std::string& s);
+        bool                                               matches(Desktop::Rule::eRuleProperty p, bool b);
 
       private:
         std::expected<WindowRuleEffectValue, std::string> parseEffect(storageType e, const std::string& result) override;

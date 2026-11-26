@@ -5,12 +5,14 @@
 #include <hyprutils/os/Process.hpp>
 #include <hyprutils/memory/WeakPtr.hpp>
 #include <hyprutils/string/Numeric.hpp>
+#include <hyprutils/utils/ScopeGuard.hpp>
 #include <format>
 #include "../shared.hpp"
 
 using namespace Hyprutils::OS;
 using namespace Hyprutils::Memory;
 using namespace Hyprutils::String;
+using namespace Hyprutils::Utils;
 
 #define UP CUniquePointer
 #define SP CSharedPointer
@@ -32,6 +34,25 @@ static bool waitForWindowCount(int expectedWindowCnt, std::string_view expectati
 
 static std::string evalLua(std::string_view code) {
     return getFromSocket(std::format("/eval {}", code));
+}
+
+TEST_CASE(pinchDeltaScalePropagation) {
+    OK(evalLua("hl.plugin.test.test_pinch_delta_scale(2.5)"));
+    OK(evalLua("hl.plugin.test.test_pinch_delta_scale(-2.0)"));
+}
+
+TEST_CASE(defaultSpecialWorkspaceGesture) {
+    CScopeGuard guard = {[&]() {
+        getFromSocket("/eval hl.gesture({ fingers = 8, direction = 'left', action = 'unset' })");
+        if (getFromSocket("/monitors").contains("(special:special)"))
+            getFromSocket("/eval hl.get_active_monitor():set_special_workspace(nil)");
+    }};
+
+    OK(evalLua("hl.gesture({ fingers = 8, direction = 'left', action = 'special' })"));
+    OK(evalLua("hl.plugin.test.gesture('left', 8)"));
+    ASSERT_CONTAINS(getFromSocket("/monitors"), "(special:special)");
+    OK(evalLua("hl.plugin.test.gesture('left', 8)"));
+    ASSERT_NOT_CONTAINS(getFromSocket("/monitors"), "(special:special)");
 }
 
 TEST_CASE(live_gesture_callbacks) {
@@ -180,11 +201,13 @@ TEST_CASE(live_gesture_callbacks) {
 
     EXPECT_CONTAINS(evalLua("hl.gesture({ fingers = 8, direction = 'up', action = { start = 1 } })"), "action.start must be a function");
     EXPECT_CONTAINS(evalLua("hl.gesture({ fingers = 8, direction = 'up', action = {} })"), "must define at least one of start, update, end, or finish");
+    EXPECT_CONTAINS(evalLua("hl.gesture({ fingers = 8, direction = 'up', action = function() end, scale = 0 })"),
+                    "value must be between -10 and -0.1 or between 0.1 and 10 - It's currently: 0");
 }
 
 // TODO: decompose this into multiple test cases
 TEST_CASE(gestures) {
-    Tests::spawnKitty();
+    SPAWN_KITTY("a");
     ASSERT(Tests::windowCount(), 1);
 
     // Give the shell a moment to initialize
@@ -233,14 +256,14 @@ TEST_CASE(gestures) {
 
     {
         auto str = getFromSocket("/workspaces");
-        EXPECT_CONTAINS(str, "ID 2 (2)");
+        EXPECT_CONTAINS(str, "workspace 2 (2)");
     }
 
     OK(getFromSocket("/eval hl.plugin.test.gesture('right', 3)"));
 
     {
         auto str = getFromSocket("/workspaces");
-        EXPECT_NOT_CONTAINS(str, "ID 2 (2)");
+        EXPECT_NOT_CONTAINS(str, "workspace 2 (2)");
     }
 
     // check for crashes
@@ -248,7 +271,7 @@ TEST_CASE(gestures) {
 
     {
         auto str = getFromSocket("/workspaces");
-        EXPECT_NOT_CONTAINS(str, "ID 2 (2)");
+        EXPECT_NOT_CONTAINS(str, "workspace 2 (2)");
     }
 
     OK(getFromSocket("/eval hl.config({ gestures = { workspace_swipe_invert = 0 } })"));
@@ -257,14 +280,14 @@ TEST_CASE(gestures) {
 
     {
         auto str = getFromSocket("/workspaces");
-        EXPECT_CONTAINS(str, "ID 2 (2)");
+        EXPECT_CONTAINS(str, "workspace 2 (2)");
     }
 
     OK(getFromSocket("/eval hl.plugin.test.gesture('left', 3)"));
 
     {
         auto str = getFromSocket("/workspaces");
-        EXPECT_NOT_CONTAINS(str, "ID 2 (2)");
+        EXPECT_NOT_CONTAINS(str, "workspace 2 (2)");
     }
 
     OK(getFromSocket("/eval hl.config({ gestures = { workspace_swipe_invert = 1 } })"));
@@ -274,8 +297,8 @@ TEST_CASE(gestures) {
 
     {
         auto str = getFromSocket("/workspaces");
-        EXPECT_NOT_CONTAINS(str, "ID 2 (2)");
-        EXPECT_CONTAINS(str, "ID 1 (1)");
+        EXPECT_NOT_CONTAINS(str, "workspace 2 (2)");
+        EXPECT_CONTAINS(str, "workspace 1 (1)");
     }
 
     OK(getFromSocket("/eval hl.plugin.test.gesture('down', 3)"));
@@ -295,7 +318,7 @@ TEST_CASE(gestures) {
 
     // This test ensures that `movecursortocorner`, which expects
     // a single-character direction argument, is parsed correctly.
-    Tests::spawnKitty();
+    SPAWN_KITTY("a");
     OK(getFromSocket("/dispatch hl.dsp.cursor.move_to_corner({ corner = 0, window = 'activewindow' })"));
     const std::string cursorPos1 = getFromSocket("/cursorpos");
     OK(getFromSocket("/eval hl.plugin.test.gesture('left', 4)"));
@@ -311,21 +334,21 @@ TEST_CASE(gestures) {
 
         // Come to workspace 5 from workspace 3: 5 will remember that.
         OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '5' })"));
-        Tests::spawnKitty(); // Keep workspace 5 open
+        SPAWN_KITTY("a"); // Keep workspace 5 open
 
         // Swipe from 1 to 5: 5 shall remember that.
         OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
         OK(getFromSocket("/eval hl.plugin.test.alt(1)"));
         OK(getFromSocket("/eval hl.plugin.test.gesture('right', 3)"));
         OK(getFromSocket("/eval hl.plugin.test.alt(0)"));
-        EXPECT_CONTAINS(getFromSocket("/activeworkspace"), "ID 5 (5)");
+        EXPECT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 5 (5)");
 
         // Must return to 1 rather than 3
         OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 'previous' })"));
-        EXPECT_CONTAINS(getFromSocket("/activeworkspace"), "ID 1 (1)");
+        EXPECT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 1 (1)");
 
         OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 'previous' })"));
-        EXPECT_CONTAINS(getFromSocket("/activeworkspace"), "ID 5 (5)");
+        EXPECT_CONTAINS(getFromSocket("/activeworkspace"), "workspace 5 (5)");
 
         OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
     }

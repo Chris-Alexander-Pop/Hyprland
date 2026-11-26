@@ -118,14 +118,14 @@ CWLPointerResource::CWLPointerResource(SP<CWlPointer> resource_, SP<CWLSeatResou
 
     m_resource->setSetCursor([this](CWlPointer* r, uint32_t serial, wl_resource* surf, int32_t hotX, int32_t hotY) {
         if (!m_owner) {
-            LOGM(Log::ERR, "Client bug: setCursor when seatClient is already dead");
+            LOG(Log::ERR, "Client bug: setCursor when seatClient is already dead");
             return;
         }
 
         auto surfResource = surf ? CWLSurfaceResource::fromResource(surf) : nullptr;
 
         if (surfResource && surfResource->m_role->role() != SURFACE_ROLE_CURSOR && surfResource->m_role->role() != SURFACE_ROLE_UNASSIGNED) {
-            r->error(-1, "Cursor surface already has a different role");
+            r->error(WL_POINTER_ERROR_ROLE, "Cursor surface already has a different role");
             return;
         }
 
@@ -168,7 +168,7 @@ void CWLPointerResource::sendEnter(SP<CWLSurfaceResource> surface, const Vector2
         return;
 
     if (m_currentSurface) {
-        LOGM(Log::WARN, "requested CWLPointerResource::sendEnter without sendLeave first.");
+        LOG(Log::WARN, "requested CWLPointerResource::sendEnter without sendLeave first.");
         sendLeave();
     }
 
@@ -192,7 +192,8 @@ void CWLPointerResource::sendLeave() {
     // release all buttons unless we have a dnd going on in which case
     // the events shall be lost.
     if (!PROTO::data->dndActive()) {
-        for (auto const& b : m_pressedButtons) {
+        const auto PRESSED_BUTTONS = m_pressedButtons;
+        for (auto const& b : PRESSED_BUTTONS) {
             sendButton(Time::millis(Time::steadyNow()), b, WL_POINTER_BUTTON_STATE_RELEASED);
         }
     }
@@ -224,10 +225,10 @@ void CWLPointerResource::sendButton(uint32_t timeMs, uint32_t button, wl_pointer
         return;
 
     if (state == WL_POINTER_BUTTON_STATE_RELEASED && std::ranges::find(m_pressedButtons, button) == m_pressedButtons.end()) {
-        LOGM(Log::ERR, "sendButton release on a non-pressed button");
+        LOG(Log::ERR, "sendButton release on a non-pressed button");
         return;
     } else if (state == WL_POINTER_BUTTON_STATE_PRESSED && std::ranges::find(m_pressedButtons, button) != m_pressedButtons.end()) {
-        LOGM(Log::ERR, "sendButton press on a non-pressed button");
+        LOG(Log::ERR, "sendButton press on a non-pressed button");
         return;
     }
 
@@ -288,7 +289,9 @@ void CWLPointerResource::sendAxisStop(uint32_t timeMs, wl_pointer_axis axis) {
 }
 
 void CWLPointerResource::sendAxisDiscrete(wl_pointer_axis axis, int32_t discrete) {
-    if (!m_owner || !m_currentSurface || m_resource->version() < 5)
+    // This event is deprecated with wl_pointer version 8 - this event is not
+    // sent to clients supporting version 8 or later.
+    if (!m_owner || !m_currentSurface || m_resource->version() < 5 || m_resource->version() >= 8)
         return;
 
     if (!(PROTO::seat->m_currentCaps & eHIDCapabilityType::HID_INPUT_CAPABILITY_POINTER))
@@ -342,7 +345,7 @@ CWLKeyboardResource::CWLKeyboardResource(SP<CWlKeyboard> resource_, SP<CWLSeatRe
     m_resource->setOnDestroy([this](CWlKeyboard* r) { PROTO::seat->destroyResource(this); });
 
     if (!g_pSeatManager->m_keyboard) {
-        LOGM(Log::ERR, "No keyboard on bound wl_keyboard??");
+        LOG(Log::ERR, "No keyboard on bound wl_keyboard??");
         return;
     }
 
@@ -394,7 +397,7 @@ void CWLKeyboardResource::sendEnter(SP<CWLSurfaceResource> surface, wl_array* ke
         return;
 
     if (m_currentSurface) {
-        LOGM(Log::WARN, "requested CWLKeyboardResource::sendEnter without sendLeave first.");
+        LOG(Log::WARN, "requested CWLKeyboardResource::sendEnter without sendLeave first.");
         sendLeave();
     }
 
@@ -559,7 +562,7 @@ void CWLSeatProtocol::bindManager(wl_client* client, void* data, uint32_t ver, u
 
     RESOURCE->m_self = RESOURCE;
 
-    LOGM(Log::DEBUG, "New seat resource bound at {:x}", (uintptr_t)RESOURCE.get());
+    LOG(Log::DEBUG, "New seat resource bound at {:x}", (uintptr_t)RESOURCE.get());
 
     m_events.newSeatResource.emit(RESOURCE);
 }

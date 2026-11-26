@@ -1,5 +1,9 @@
 #pragma once
 
+namespace Render {
+    class CRenderContext;
+}
+
 /*
     Implementations for:
      - wl_data_offer
@@ -30,7 +34,7 @@ class CWLSurfaceResource;
 class CWLDataOfferResource : public IDataOffer {
   public:
     CWLDataOfferResource(SP<CWlDataOffer> resource_, SP<IDataSource> source_);
-    ~CWLDataOfferResource();
+    ~CWLDataOfferResource() = default;
 
     bool                             good();
     void                             sendData();
@@ -45,12 +49,22 @@ class CWLDataOfferResource : public IDataOffer {
 
     bool                             m_dead     = false;
     bool                             m_accepted = false;
-    bool                             m_recvd    = false;
 
   private:
-    SP<CWlDataOffer> m_resource;
+    void                              updateAction();
+
+    SP<CWlDataOffer>                  m_resource;
+    CHyprSignalListener               m_sourceDestroy;
+    uint32_t                          m_destinationActions = 0;
+    uint32_t                          m_preferredAction    = 0;
+    wl_data_device_manager_dnd_action m_action             = WL_DATA_DEVICE_MANAGER_DND_ACTION_NONE;
+    bool                              m_legacy             = false;
+    bool                              m_dropped            = false;
+    bool                              m_inAsk              = false;
 
     friend class CWLDataDeviceResource;
+    friend class CWLDataDeviceProtocol;
+    friend class CDataDeviceTest;
 };
 
 class CWLDataSourceResource : public IDataSource {
@@ -84,6 +98,7 @@ class CWLDataSourceResource : public IDataSource {
 
     std::vector<std::string>         m_mimeTypes;
     uint32_t                         m_supportedActions = 0;
+    bool                             m_actionsSet       = false;
 
   private:
     SP<CWlDataSource> m_resource;
@@ -139,7 +154,7 @@ class CWLDataDeviceProtocol : public IWaylandProtocol {
     virtual void bindManager(wl_client* client, void* data, uint32_t ver, uint32_t id);
 
     // renders and damages the dnd icon, if present
-    void renderDND(PHLMONITOR pMonitor, const Time::steady_tp& when);
+    void renderDND(Render::CRenderContext& ctx, PHLMONITOR pMonitor, const Time::steady_tp& when);
     // for inputmgr to force refocus
     // TODO: move handling to seatmgr
     bool dndActive();
@@ -169,14 +184,15 @@ class CWLDataDeviceProtocol : public IWaylandProtocol {
     void onDndPointerFocus();
 
     struct {
-        WP<IDataDevice>         focusedDevice;
-        WP<IDataSource>         currentSource;
-        WP<CWLSurfaceResource>  dndSurface;
-        WP<CWLSurfaceResource>  originSurface;
-        std::optional<Vector2D> touchPos;
-        bool                    overriddenCursor = false;
-        CHyprSignalListener     dndSurfaceDestroy;
-        CHyprSignalListener     dndSurfaceCommit;
+        WP<IDataDevice>          focusedDevice;
+        WP<IDataSource>          currentSource;
+        WP<CWLDataOfferResource> currentOffer;
+        WP<CWLSurfaceResource>   dndSurface;
+        WP<CWLSurfaceResource>   originSurface;
+        std::optional<Vector2D>  touchPos;
+        bool                     overriddenCursor = false;
+        CHyprSignalListener      dndSurfaceDestroy;
+        CHyprSignalListener      dndSurfaceCommit;
 
         // for ending a dnd
         CHyprSignalListener mouseMove;
@@ -190,13 +206,13 @@ class CWLDataDeviceProtocol : public IWaylandProtocol {
     void initiateDrag(WP<CWLDataSourceResource> currentSource, SP<CWLSurfaceResource> dragSurface, SP<CWLSurfaceResource> origin);
     void updateDrag();
     void dropDrag();
-    void completeDrag();
-    void cleanupDndState(bool resetDevice, bool resetSource, bool simulateInput);
-    bool wasDragSuccessful();
+    void cleanupDndState();
+    bool canDrop();
 
     //
     SP<IDataDevice> dataDeviceForClient(wl_client*);
 
+    friend class CDataDeviceDragTest;
     friend class CSeatManager;
     friend class CWLDataDeviceManagerResource;
     friend class CWLDataDeviceResource;

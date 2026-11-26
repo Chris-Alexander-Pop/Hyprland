@@ -22,13 +22,13 @@ runs:
           git \
           glaze \
           glm \
-          glslang \
           go \
           gtest \
-          hyprlang \
           hyprcursor \
+          hyprland-protocols \
           jq \
           libc++ \
+          libcanberra \
           libdisplay-info \
           libdrm \
           libei \
@@ -56,7 +56,6 @@ runs:
           pkgconf \
           pugixml \
           scdoc \
-          sdbus-cpp \
           seatd \
           systemd \
           tomlplusplus \

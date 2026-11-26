@@ -53,8 +53,8 @@ namespace Layout::Tiled {
         void                     swapStrips(size_t a, size_t b);
 
         void                     setOffset(double offset);
-        double                   getOffset() const;
         void                     adjustOffset(double delta);
+        double                   getOffset() const;
         struct SScrollInhibitor& getScrollInhibitor();
 
         double                   calculateMaxExtent(const CBox& usableArea, bool fullscreenOnOne = false) const;
@@ -69,6 +69,7 @@ namespace Layout::Tiled {
 
         void                     centerStrip(size_t stripIndex, const CBox& usableArea, bool fullscreenOnOne = false);
         void                     fitStrip(size_t stripIndex, const CBox& usableArea, bool fullscreenOnOne = false);
+        void                     clampedCenterStrip(size_t stripIndex, const CBox& usableArea, bool fullscreenOnOne = false);
 
         bool                     isStripVisible(size_t stripIndex, const CBox& usableArea, bool fullscreenOnOne = false, bool full = false) const;
 

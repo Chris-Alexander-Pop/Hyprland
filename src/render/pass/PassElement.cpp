@@ -1,25 +1,29 @@
 #include "PassElement.hpp"
 
-std::optional<CBox> IPassElement::boundingBox() {
+std::optional<CBox> IPassElement::boundingBox(Render::CRenderContext& ctx) {
     return std::nullopt;
 }
 
-CRegion IPassElement::opaqueRegion() {
+CRegion IPassElement::opaqueRegion(Render::CRenderContext& ctx) {
     return {};
 }
 
-bool IPassElement::disableSimplification() {
+bool IPassElement::disableSimplification(Render::CRenderContext& ctx) {
     return false;
 }
 
-void IPassElement::discard() {
+bool IPassElement::requiresFullDamage(Render::CRenderContext& ctx) {
+    return false;
+}
+
+void IPassElement::discard(Render::CRenderContext& ctx) {
     ;
 }
 
-bool IPassElement::undiscardable() {
+bool IPassElement::undiscardable(Render::CRenderContext& ctx) {
     return false;
 }
 
-std::vector<UP<IPassElement>> IPassElement::draw() {
+std::vector<UP<IPassElement>> IPassElement::draw(Render::CRenderContext& ctx) {
     return {};
 }

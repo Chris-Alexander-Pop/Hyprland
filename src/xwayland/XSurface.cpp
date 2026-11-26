@@ -2,7 +2,6 @@
 #include "XWayland.hpp"
 #include "../protocols/XWaylandShell.hpp"
 #include "../protocols/core/Compositor.hpp"
-#include "../managers/ANRManager.hpp"
 #include "../helpers/time/Time.hpp"
 
 #ifndef NO_XWAYLAND
@@ -130,7 +129,7 @@ void CXWaylandSurface::map() {
     m_mapped = true;
     m_surface->map();
 
-    Log::logger->log(Log::DEBUG, "XWayland surface {:x} mapping", rc<uintptr_t>(this));
+    LOG(Log::DEBUG, "XWayland surface {:x} mapping", rc<uintptr_t>(this));
 
     m_events.map.emit();
 
@@ -150,7 +149,7 @@ void CXWaylandSurface::unmap() {
     m_events.unmap.emit();
     m_surface->unmap();
 
-    Log::logger->log(Log::DEBUG, "XWayland surface {:x} unmapping", rc<uintptr_t>(this));
+    LOG(Log::DEBUG, "XWayland surface {:x} unmapping", rc<uintptr_t>(this));
 
     g_pXWayland->m_wm->updateClientList();
 }
@@ -160,17 +159,17 @@ void CXWaylandSurface::considerMap() {
         return;
 
     if (!m_surface) {
-        Log::logger->log(Log::DEBUG, "XWayland surface: considerMap, nope, no surface");
+        LOG(Log::DEBUG, "XWayland surface: considerMap, nope, no surface");
         return;
     }
 
     if (m_surface->m_current.texture) {
-        Log::logger->log(Log::DEBUG, "XWayland surface: considerMap, sure, we have a buffer");
+        LOG(Log::DEBUG, "XWayland surface: considerMap, sure, we have a buffer");
         map();
         return;
     }
 
-    Log::logger->log(Log::DEBUG, "XWayland surface: considerMap, nope, we don't have a buffer");
+    LOG(Log::DEBUG, "XWayland surface: considerMap, nope, we don't have a buffer");
 }
 
 bool CXWaylandSurface::wantsFocus() {
@@ -198,6 +197,9 @@ void CXWaylandSurface::configure(const CBox& box) {
     Vector2D oldSize = m_geometry.size();
 
     m_geometry = box;
+
+    if (m_surface)
+        m_surface->m_pending.updated.bits.xwayland = true;
 
     uint32_t mask     = XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y | XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT | XCB_CONFIG_WINDOW_BORDER_WIDTH;
     uint32_t values[] = {box.x, box.y, box.width, box.height, 0};
@@ -291,8 +293,8 @@ void CXWaylandSurface::ping() {
     bool supportsPing = std::ranges::find(m_protocols, HYPRATOMS["_NET_WM_PING"]) != m_protocols.end();
 
     if (!supportsPing) {
-        Log::logger->log(Log::TRACE, "CXWaylandSurface: XID {} does not support ping, just sending an instant reply", m_xID);
-        g_pANRManager->onResponse(m_self.lock());
+        LOG(Log::TRACE, "CXWaylandSurface: XID {} does not support ping, just sending an instant reply", m_xID);
+        m_events.pong.emit();
         return;
     }
 

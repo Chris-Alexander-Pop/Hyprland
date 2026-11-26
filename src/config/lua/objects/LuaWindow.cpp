@@ -4,9 +4,12 @@
 #include "LuaGroup.hpp"
 #include "LuaObjectHelpers.hpp"
 
-#include "../../../desktop/view/Window.hpp"
+#include "../../../desktop/view/window/Window.hpp"
+#include "../../../desktop/view/window/WindowFullscreenPolicy.hpp"
+#include "../../../desktop/view/window/WindowGroupMembership.hpp"
+#include "../../../desktop/view/window/WindowSwallowController.hpp"
 #include "../../../desktop/view/Group.hpp"
-#include "../../../desktop/Workspace.hpp"
+#include "../../../workspace/HLWorkspace.hpp"
 #include "../../../desktop/state/FocusState.hpp"
 #include "../../../desktop/history/WindowHistoryTracker.hpp"
 #include "../../../layout/algorithm/Algorithm.hpp"
@@ -19,6 +22,7 @@
 #include "../../../managers/fullscreen/FullscreenController.hpp"
 
 #include <format>
+#include <lua.h>
 #include <string_view>
 
 using namespace Config::Lua;
@@ -26,10 +30,10 @@ using namespace Config::Lua;
 static constexpr const char* MT = "HL.Window";
 
 //
-static int getFocusHistoryID(PHLWINDOW wnd) {
+static int getFocusHistoryID(const PHLWINDOWREF& wnd) {
     const auto& history = Desktop::History::windowTracker()->fullHistory();
     for (size_t i = 0; i < history.size(); ++i) {
-        if (history[i].lock() == wnd)
+        if (history[i] == wnd)
             return sc<int>(history.size() - i - 1); // reverse order for backwards compat
     }
 
@@ -40,13 +44,13 @@ static int windowEq(lua_State* L) {
     const auto* lhs = sc<PHLWINDOWREF*>(luaL_checkudata(L, 1, MT));
     const auto* rhs = sc<PHLWINDOWREF*>(luaL_checkudata(L, 2, MT));
 
-    lua_pushboolean(L, lhs->lock() == rhs->lock());
+    lua_pushboolean(L, *lhs == *rhs);
     return 1;
 }
 
 static int windowToString(lua_State* L) {
     const auto* ref = sc<PHLWINDOWREF*>(luaL_checkudata(L, 1, MT));
-    const auto  w   = ref->lock();
+    const auto  w   = *ref;
 
     if (!w)
         lua_pushstring(L, "HL.Window(expired)");
@@ -57,10 +61,10 @@ static int windowToString(lua_State* L) {
 }
 
 static int windowIndex(lua_State* L) {
-    auto*      ref = sc<PHLWINDOWREF*>(luaL_checkudata(L, 1, MT));
-    const auto w   = ref->lock();
+    const auto* ref = sc<PHLWINDOWREF*>(luaL_checkudata(L, 1, MT));
+    const auto  w   = *ref;
     if (!w) {
-        Log::logger->log(Log::DEBUG, "[lua] Tried to access an expired object");
+        LOG(Log::DEBUG, "[lua] Tried to access an expired object");
         lua_pushnil(L);
         return 1;
     }
@@ -70,11 +74,11 @@ static int windowIndex(lua_State* L) {
     if (key == "address")
         lua_pushstring(L, std::format("0x{:x}", reinterpret_cast<uintptr_t>(w.get())).c_str());
     else if (key == "mapped")
-        lua_pushboolean(L, w->m_isMapped);
+        lua_pushboolean(L, w->mapped());
     else if (key == "hidden")
         lua_pushboolean(L, w->isHidden());
     else if (key == "visible")
-        lua_pushboolean(L, w->visible());
+        lua_pushboolean(L, w->mapped() && w->acceptsInput() && w->alphaNonZero());
     else if (key == "accepts_input")
         lua_pushboolean(L, w->acceptsInput());
     else if (key == "at") {
@@ -95,7 +99,7 @@ static int windowIndex(lua_State* L) {
         else
             lua_pushnil(L);
     } else if (key == "floating")
-        lua_pushboolean(L, w->m_isFloating);
+        lua_pushboolean(L, w->isFloating());
     else if (key == "monitor") {
         const auto mon = w->m_monitor.lock();
         if (mon)
@@ -103,36 +107,45 @@ static int windowIndex(lua_State* L) {
         else
             lua_pushnil(L);
     } else if (key == "class")
-        lua_pushstring(L, w->m_class.c_str());
+        lua_pushstring(L, w->metadata().appID().c_str());
     else if (key == "title")
-        lua_pushstring(L, w->m_title.c_str());
+        lua_pushstring(L, w->metadata().title().c_str());
     else if (key == "initial_class")
-        lua_pushstring(L, w->m_initialClass.c_str());
+        lua_pushstring(L, w->metadata().initialAppID().c_str());
     else if (key == "initial_title")
-        lua_pushstring(L, w->m_initialTitle.c_str());
+        lua_pushstring(L, w->metadata().initialTitle().c_str());
     else if (key == "pid")
-        lua_pushinteger(L, sc<lua_Integer>(w->getPID()));
+        lua_pushinteger(L, sc<lua_Integer>(w->backend().pid()));
     else if (key == "xwayland")
-        lua_pushboolean(L, w->m_isX11);
+        lua_pushboolean(L, w->backend().isX11());
     else if (key == "pinned")
-        lua_pushboolean(L, w->m_pinned);
+        lua_pushboolean(L, sc<bool>(w->m_state & Desktop::View::WINDOW_STATE_PINNED));
     else if (key == "pin_fullscreened")
-        lua_pushboolean(L, w->m_pinFullscreened);
-    else if (key == "fullscreen")
-        lua_pushinteger(L, sc<lua_Integer>(sc<uint8_t>(Fullscreen::controller()->getFullscreenModes(w).internal)));
-    else if (key == "fullscreen_client")
-        lua_pushinteger(L, sc<lua_Integer>(sc<uint8_t>(Fullscreen::controller()->getFullscreenModes(w).client)));
-    else if (key == "allowed_over_fullscreen")
-        lua_pushboolean(L, w->m_allowedOverFullscreen);
-    else if (key == "fullscreen_handler")
-        lua_pushstring(L, Fullscreen::controller()->getFullscreenHandlerNameAsString(w).c_str());
-    else if (key == "group") {
-        if (!w->m_group) {
+        lua_pushboolean(L, w->fullscreenPolicy().pinFullscreened());
+    else if (key == "fullscreen") {
+        if (!w.expired())
+            lua_pushinteger(L, sc<lua_Integer>(sc<uint8_t>(Fullscreen::controller()->getFullscreenModes(w.lock()).internal)));
+        else
+            lua_pushnil(L);
+    } else if (key == "fullscreen_client") {
+        if (!w.expired())
+            lua_pushinteger(L, sc<lua_Integer>(sc<uint8_t>(Fullscreen::controller()->getFullscreenModes(w.lock()).client)));
+        else
+            lua_pushnil(L);
+    } else if (key == "allowed_over_fullscreen")
+        lua_pushboolean(L, w->fullscreenPolicy().allowedOverFullscreen());
+    else if (key == "fullscreen_handler") {
+        if (!w.expired())
+            lua_pushstring(L, Fullscreen::controller()->getFullscreenHandlerNameAsString(w.lock()).c_str());
+        else
+            lua_pushnil(L);
+    } else if (key == "group") {
+        if (!w->grouping().group()) {
             lua_pushnil(L);
             return 1;
         }
 
-        Objects::CLuaGroup::push(L, w->m_group);
+        Objects::CLuaGroup::push(L, w->grouping().group());
     } else if (key == "tags") {
         lua_newtable(L);
 
@@ -142,23 +155,26 @@ static int windowIndex(lua_State* L) {
             lua_rawseti(L, -2, i++);
         }
     } else if (key == "swallowing") {
-        const auto swallowee = w->m_swallowee.lock();
+        const auto swallowee = w->swallowing().swallowee();
         if (swallowee)
             Objects::CLuaWindow::push(L, swallowee);
         else
             lua_pushnil(L);
     } else if (key == "focus_history_id")
         lua_pushinteger(L, sc<lua_Integer>(getFocusHistoryID(w)));
-    else if (key == "inhibiting_idle")
-        lua_pushboolean(L, g_pInputManager && g_pInputManager->isWindowInhibiting(w, false));
-    else if (key == "xdg_tag") {
-        const auto xdgTag = w->xdgTag();
+    else if (key == "inhibiting_idle") {
+        if (!w.expired())
+            lua_pushboolean(L, g_pInputManager && g_pInputManager->isWindowInhibiting(w.lock(), false));
+        else
+            lua_pushnil(L);
+    } else if (key == "xdg_tag") {
+        const auto xdgTag = w->backend().metadata().tag;
         if (xdgTag)
             lua_pushstring(L, xdgTag->c_str());
         else
             lua_pushnil(L);
     } else if (key == "xdg_description") {
-        const auto xdgDescription = w->xdgDescription();
+        const auto xdgDescription = w->backend().metadata().description;
         if (xdgDescription)
             lua_pushstring(L, xdgDescription->c_str());
         else
@@ -166,15 +182,20 @@ static int windowIndex(lua_State* L) {
     } else if (key == "content_type")
         lua_pushstring(L, NContentType::toString(w->getContentType()).c_str());
     else if (key == "stable_id")
-        lua_pushinteger(L, sc<lua_Integer>(w->m_stableID));
+        lua_pushstring(L, std::format("{:x}", w->metadata().stableID()).c_str());
     else if (key == "layout") {
-        const auto target = w->layoutTarget();
-        if (!target || target->floating() || !w->m_workspace || !w->m_workspace->m_space) {
+        if (w.expired()) {
             lua_pushnil(L);
             return 1;
         }
 
-        const auto& algo = w->m_workspace->m_space->algorithm();
+        const auto target = w->layoutTarget();
+        if (!target || target->floating() || !w->m_workspace || !w->m_workspace->space()) {
+            lua_pushnil(L);
+            return 1;
+        }
+
+        const auto& algo = w->m_workspace->space()->algorithm();
         if (!algo || !algo->tiledAlgo()) {
             lua_pushnil(L);
             return 1;
@@ -240,7 +261,7 @@ static int windowIndex(lua_State* L) {
     } else if (key == "active") {
         lua_pushboolean(L, w == Desktop::focusState()->window());
     } else if (key == "tearing_hint") {
-        lua_pushboolean(L, w->m_tearingHint);
+        lua_pushboolean(L, sc<bool>(w->m_hints & Desktop::View::WINDOW_HINT_TEAR));
     } else
         lua_pushnil(L);
 
@@ -252,7 +273,12 @@ void Objects::CLuaWindow::setup(lua_State* L) {
 }
 
 void Objects::CLuaWindow::push(lua_State* L, PHLWINDOWREF w) {
-    new (lua_newuserdata(L, sizeof(PHLWINDOWREF))) PHLWINDOWREF(w ? w->m_self : nullptr);
+    if (!w) {
+        lua_pushnil(L);
+        return;
+    }
+
+    new (lua_newuserdata(L, sizeof(PHLWINDOWREF))) PHLWINDOWREF(w);
     luaL_getmetatable(L, MT);
     lua_setmetatable(L, -2);
 }

@@ -36,7 +36,7 @@ const std::vector<SNagDatePoint> NAG_DATE_POINTS = {
 // clang-format on
 
 CDonationNagManager::CDonationNagManager() {
-    static auto PNONAG = CConfigValue<Config::INTEGER>("ecosystem:no_donation_nag");
+    static auto PNONAG = CConfigValue<Config::BOOL>("ecosystem:no_donation_nag");
 
     if (g_pVersionKeeperMgr->fired() || *PNONAG)
         return;
@@ -69,12 +69,12 @@ CDonationNagManager::CDonationNagManager() {
     // don't nag if the last nag was less than a month ago. This is
     // mostly for first-time nags, as other nags happen in specific time frames shorter than a month
     if (EPOCH - state.epoch < MONTH_IN_SECONDS) {
-        Log::logger->log(Log::DEBUG, "DonationNag: last nag was {} days ago, too early for a nag.", sc<int>(std::round((EPOCH - state.epoch) / sc<double>(DAY_IN_SECONDS))));
+        LOG(Log::DEBUG, "DonationNag: last nag was {} days ago, too early for a nag.", sc<int>(std::round((EPOCH - state.epoch) / sc<double>(DAY_IN_SECONDS))));
         return;
     }
 
     if (!NFsUtils::executableExistsInPath("hyprland-donate-screen")) {
-        Log::logger->log(Log::ERR, "DonationNag: executable doesn't exist, skipping.");
+        LOG(Log::ERR, "DonationNag: executable doesn't exist, skipping.");
         return;
     }
 
@@ -91,7 +91,7 @@ CDonationNagManager::CDonationNagManager() {
         if (DAY < nagPoint.dayStart || DAY > nagPoint.dayEnd)
             continue;
 
-        Log::logger->log(Log::DEBUG, "DonationNag: hit nag month {} days {}-{}, it's {} today, nagging", MONTH, nagPoint.dayStart, nagPoint.dayEnd, DAY);
+        LOG(Log::DEBUG, "DonationNag: hit nag month {} days {}-{}, it's {} today, nagging", MONTH, nagPoint.dayStart, nagPoint.dayEnd, DAY);
 
         fire();
 
@@ -103,10 +103,10 @@ CDonationNagManager::CDonationNagManager() {
     }
 
     if (!m_fired)
-        Log::logger->log(Log::DEBUG, "DonationNag: didn't hit any nagging periods, checking update");
+        LOG(Log::DEBUG, "DonationNag: didn't hit any nagging periods, checking update");
 
     if (state.major < currentMajor) {
-        Log::logger->log(Log::DEBUG, "DonationNag: hit nag for major update {} -> {}", state.major, currentMajor);
+        LOG(Log::DEBUG, "DonationNag: hit nag for major update {} -> {}", state.major, currentMajor);
 
         fire();
 
@@ -116,7 +116,7 @@ CDonationNagManager::CDonationNagManager() {
     }
 
     if (!m_fired)
-        Log::logger->log(Log::DEBUG, "DonationNag: didn't hit nagging conditions");
+        LOG(Log::DEBUG, "DonationNag: didn't hit nagging conditions");
 }
 
 bool CDonationNagManager::fired() {
@@ -136,7 +136,7 @@ void CDonationNagManager::fire() {
 
 CDonationNagManager::SStateData CDonationNagManager::getState() {
     static const auto DATAROOT = NFsUtils::getDataHome();
-    const auto        STR      = NFsUtils::readFileAsString(*DATAROOT + "/" + LAST_NAG_FILE_NAME);
+    const auto        STR      = NFsUtils::readFileAsString(std::format("{}/{}", *DATAROOT, LAST_NAG_FILE_NAME));
 
     if (!STR.has_value())
         return {};
@@ -154,5 +154,5 @@ CDonationNagManager::SStateData CDonationNagManager::getState() {
 
 void CDonationNagManager::writeState(const SStateData& s) {
     static const auto DATAROOT = NFsUtils::getDataHome();
-    NFsUtils::writeToFile(*DATAROOT + "/" + LAST_NAG_FILE_NAME, std::format("{}\n{}", s.epoch, s.major));
+    NFsUtils::writeToFile(std::format("{}/{}", *DATAROOT, LAST_NAG_FILE_NAME), std::format("{}\n{}", s.epoch, s.major));
 }

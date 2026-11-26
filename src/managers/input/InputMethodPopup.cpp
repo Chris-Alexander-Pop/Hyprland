@@ -31,7 +31,7 @@ void CInputPopup::onDestroy() {
 }
 
 void CInputPopup::onMap() {
-    Log::logger->log(Log::DEBUG, "Mapped an IME Popup");
+    LOG(Log::DEBUG, "Mapped an IME Popup");
 
     updateBox();
     damageEntire();
@@ -45,7 +45,7 @@ void CInputPopup::onMap() {
 }
 
 void CInputPopup::onUnmap() {
-    Log::logger->log(Log::DEBUG, "Unmapped an IME Popup");
+    LOG(Log::DEBUG, "Unmapped an IME Popup");
 
     damageEntire();
 }
@@ -58,7 +58,7 @@ void CInputPopup::damageEntire() {
     const auto OWNER = queryOwner();
 
     if (!OWNER) {
-        Log::logger->log(Log::ERR, "BUG THIS: No owner in imepopup::damageentire");
+        LOG(Log::ERR, "BUG THIS: No owner in imepopup::damageentire");
         return;
     }
     CBox box = globalBox();
@@ -69,7 +69,7 @@ void CInputPopup::damageSurface() {
     const auto OWNER = queryOwner();
 
     if (!OWNER) {
-        Log::logger->log(Log::ERR, "BUG THIS: No owner in imepopup::damagesurface");
+        LOG(Log::ERR, "BUG THIS: No owner in imepopup::damagesurface");
         return;
     }
 
@@ -103,7 +103,7 @@ void CInputPopup::updateBox() {
         cursorBoxParent = {0, 0, sc<int>(parentBox.w), sc<int>(parentBox.h)};
     }
 
-    Vector2D   currentPopupSize = m_surface->getViewporterCorrectedSize() / m_surface->resource()->m_current.scale;
+    Vector2D   currentPopupSize = m_surface->resource()->m_current.size;
 
     PHLMONITOR pMonitor = State::monitorState()->query().vec(parentBox.middle()).run();
 
@@ -135,15 +135,15 @@ void CInputPopup::updateBox() {
 
     damageSurface();
 
-    if (const auto PM = State::monitorState()->query().vec(g_pInputManager->getMouseCoordsInternal()).run(); PM && PM->m_id != m_lastMonitor) {
+    if (pMonitor->m_id != m_lastMonitor) {
         const auto PML = State::monitorState()->query().id(m_lastMonitor).run();
 
         if (PML)
             m_surface->resource()->leave(PML->m_self.lock());
 
-        m_surface->resource()->enter(PM->m_self.lock());
+        m_surface->resource()->enter(pMonitor->m_self.lock());
 
-        m_lastMonitor = PM->m_id;
+        m_lastMonitor = pMonitor->m_id;
     }
 }
 
@@ -151,7 +151,7 @@ CBox CInputPopup::globalBox() {
     const auto OWNER = queryOwner();
 
     if (!OWNER) {
-        Log::logger->log(Log::ERR, "BUG THIS: No owner in imepopup::globalbox");
+        LOG(Log::ERR, "BUG THIS: No owner in imepopup::globalbox");
         return {};
     }
     CBox parentBox = OWNER->getSurfaceBoxGlobal().value_or(CBox{0, 0, 500, 500});
@@ -160,9 +160,19 @@ CBox CInputPopup::globalBox() {
 }
 
 bool CInputPopup::isVecInPopup(const Vector2D& point) {
-    return globalBox().containsPoint(point);
+    return m_popup->m_mapped && globalBox().containsPoint(point);
 }
 
 SP<CWLSurfaceResource> CInputPopup::getSurface() {
     return m_surface->resource();
+}
+
+bool CInputPopup::shouldBeRendered() {
+    const auto OWNER = queryOwner();
+
+    if (!OWNER)
+        return false;
+
+    const auto KB_FOCUS = g_pSeatManager->m_state.keyboardFocus;
+    return KB_FOCUS && KB_FOCUS == OWNER->resource();
 }

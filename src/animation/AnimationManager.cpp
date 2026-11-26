@@ -4,10 +4,14 @@
 #include "../helpers/AnimatedVariable.hpp"
 #include "../macros.hpp"
 #include "../config/ConfigValue.hpp"
-#include "../desktop/view/Window.hpp"
+#include "../desktop/view/window/Window.hpp"
+#include "../desktop/view/window/WindowEffectsController.hpp"
+#include "../desktop/view/window/WindowPresentation.hpp"
+#include "../render/decorations/IHyprWindowDecoration.hpp"
 #include "../desktop/view/LayerSurface.hpp"
 #include "../managers/eventLoop/EventLoopManager.hpp"
 #include "../managers/fullscreen/FullscreenController.hpp"
+#include "../managers/fullscreen/FullscreenTypes.hpp"
 #include "../render/Renderer.hpp"
 #include "../event/EventBus.hpp"
 #include "../state/MonitorState.hpp"
@@ -81,36 +85,25 @@ static SAnimationContext& getContext(Hyprutils::Animation::CBaseAnimatedVariable
     }
 }
 
-static void damageWindowForPolicies(PHLWINDOW pWindow, bool entire, bool border, bool shadow, bool glow) {
+static void damageWindowForPolicies(PHLWINDOW pWindow, bool entire, const std::vector<SP<IHyprWindowDecoration>>& decorations) {
     if (entire)
         g_pHyprRenderer->damageWindow(pWindow); // damageWindow already damages all decorations
-    else {
-        if (border) {
-            const auto PDECO = pWindow->getDecorationByType(DECORATION_BORDER);
-            PDECO->damageEntire();
-        }
-        if (shadow) {
-            const auto PDECO = pWindow->getDecorationByType(DECORATION_SHADOW);
-            PDECO->damageEntire();
-        }
-        if (glow) {
-            const auto PDECO = pWindow->getDecorationByType(DECORATION_INNER_GLOW);
-            PDECO->damageEntire();
-        }
-    }
+    else
+        for (const auto& decoration : decorations)
+            decoration->damageEntire();
 }
 
 static void preDamageWorkspace(PHLWORKSPACE pWorkspace, PHLMONITOR pMonitor) {
     // don't damage the whole monitor on workspace change, unless it's a special workspace, because dim/blur etc
-    if (pWorkspace->m_isSpecialWorkspace)
+    if (pWorkspace->type() == Workspace::eWorkspaceType::SPECIAL)
         g_pHyprRenderer->damageMonitor(pMonitor);
 
     // TODO: just make this into a damn callback already vax...
     for (auto const& w : Desktop::windowState()->windows()) {
-        if (!w->m_isMapped || w->isHidden() || w->m_workspace != pWorkspace)
+        if (!w->mapped() || w->isHidden() || w->presentation().workspace() != pWorkspace)
             continue;
 
-        if (w->m_isFloating && !w->m_pinned) {
+        if (w->isFloating() && !(w->m_state & Desktop::View::WINDOW_STATE_PINNED)) {
             // still doing the full damage hack for floating because sometimes when the window
             // goes through multiple monitors the last rendered frame is missing damage somehow??
             const CBox windowBoxNoOffset = w->getFullWindowBoundingBox();
@@ -119,13 +112,13 @@ static void preDamageWorkspace(PHLWORKSPACE pWorkspace, PHLMONITOR pMonitor) {
                 g_pHyprRenderer->damageWindow(w, true);
         }
 
-        if (pWorkspace->m_isSpecialWorkspace)
+        if (pWorkspace->type() == Workspace::eWorkspaceType::SPECIAL)
             g_pHyprRenderer->damageWindow(w, true); // hack for special too because it can cross multiple monitors
     }
 
     // damage any workspace window that is on any monitor
     for (auto const& w : Desktop::windowState()->windows()) {
-        if (!validMapped(w) || w->m_workspace != pWorkspace || w->m_pinned)
+        if (!validMapped(w) || w->presentation().workspace() != pWorkspace || (w->m_state & Desktop::View::WINDOW_STATE_PINNED))
             continue;
 
         g_pHyprRenderer->damageWindow(w);
@@ -137,7 +130,7 @@ static void handleUpdate(CAnimatedVariable<VarType>& av, bool warp) {
     bool animationsDisabled = warp;
 
     if (auto w = av.m_Context.pWindow.lock()) {
-        if (!w->m_monitor.lock())
+        if (!w->presentation().monitor())
             return;
         animationsDisabled = w->m_ruleApplicator->noAnim().valueOr(animationsDisabled);
     } else if (auto ws = av.m_Context.pWorkspace.lock()) {
@@ -160,11 +153,11 @@ static void handleUpdate(CAnimatedVariable<VarType>& av, bool warp) {
 }
 
 void CHyprAnimationManager::tick() {
-    static std::chrono::time_point lastTick = std::chrono::high_resolution_clock::now();
-    m_lastTickTimeMs                        = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - lastTick).count() / 1000.0;
-    lastTick                                = std::chrono::high_resolution_clock::now();
+    static std::chrono::time_point lastTick = std::chrono::steady_clock::now();
+    m_lastTickTimeMs                        = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - lastTick).count() / 1000.0;
+    lastTick                                = std::chrono::steady_clock::now();
 
-    static auto PANIMENABLED = CConfigValue<Config::INTEGER>("animations:enabled");
+    static auto PANIMENABLED = CConfigValue<Config::BOOL>("animations:enabled");
 
     if (m_vActiveAnimatedVariables.empty()) {
         tickDone();
@@ -176,16 +169,14 @@ void CHyprAnimationManager::tick() {
     // batch damage per owner to avoid redundant damage calls, otherwise
     // we could be damaging many many times too much
     struct SDamageOwner {
-        PHLWINDOW    window;
-        PHLWORKSPACE workspace;
-        PHLLS        layer;
-        PHLMONITOR   monitor;
-        CBox         previousFull;
-        bool         entire            = false;
-        bool         border            = false;
-        bool         shadow            = false;
-        bool         glow              = false;
-        bool         trackWindowMotion = false;
+        PHLWINDOW                              window;
+        PHLWORKSPACE                           workspace;
+        PHLLS                                  layer;
+        PHLMONITOR                             monitor;
+        CBox                                   previousFull;
+        std::vector<SP<IHyprWindowDecoration>> decorations;
+        bool                                   entire            = false;
+        bool                                   trackWindowMotion = false;
     };
 
     std::vector<SDamageOwner> owners;
@@ -208,7 +199,7 @@ void CHyprAnimationManager::tick() {
                 }
             }
             if (!owner) {
-                auto monitor = w->m_monitor.lock();
+                auto monitor = w->presentation().monitor();
                 if (!monitor)
                     continue;
                 owners.emplace_back(SDamageOwner{.window = w, .monitor = monitor});
@@ -247,10 +238,16 @@ void CHyprAnimationManager::tick() {
             continue;
 
         switch (ctx.eDamagePolicy) {
-            case AVARDAMAGE_ENTIRE: owner->entire = true; break;
-            case AVARDAMAGE_BORDER: owner->border = true; break;
-            case AVARDAMAGE_SHADOW: owner->shadow = true; break;
-            case AVARDAMAGE_GLOW: owner->glow = true; break;
+            case AVARDAMAGE_ENTIRE:
+                owner->entire = true;
+                owner->decorations.clear();
+                break;
+            case AVARDAMAGE_DECORATION: {
+                const auto DECORATION = ctx.pDecoration.lock();
+                if (!owner->entire && DECORATION && std::ranges::find(owner->decorations, DECORATION) == owner->decorations.end())
+                    owner->decorations.emplace_back(DECORATION);
+                break;
+            }
             default: break;
         }
     }
@@ -266,7 +263,7 @@ void CHyprAnimationManager::tick() {
     // pre-damage each owner once (old state)
     for (const auto& owner : owners) {
         if (owner.window)
-            damageWindowForPolicies(owner.window, owner.entire, owner.border, owner.shadow, owner.glow);
+            damageWindowForPolicies(owner.window, owner.entire, owner.decorations);
         else if (owner.workspace)
             preDamageWorkspace(owner.workspace, owner.monitor);
         else if (owner.layer) {
@@ -307,17 +304,17 @@ void CHyprAnimationManager::tick() {
         if (!owner.window || !owner.trackWindowMotion)
             continue;
 
-        owner.window->recordMotionBlur(owner.previousFull, owner.window->getFullWindowBoundingBox());
+        owner.window->effects().onPositionUpdate(owner.previousFull, owner.window->getFullWindowBoundingBox(), Desktop::View::WINDOW_UPDATE_ANIMATION);
     }
 
     // post-damage each owner once (new state) + schedule frames
     for (const auto& owner : owners) {
         if (owner.window)
-            damageWindowForPolicies(owner.window, owner.entire, owner.border, owner.shadow, owner.glow);
+            damageWindowForPolicies(owner.window, owner.entire, owner.decorations);
         else if (owner.workspace) {
             if (owner.entire) {
                 for (auto const& w : Desktop::windowState()->windows()) {
-                    if (!validMapped(w) || w->m_workspace != owner.workspace || w->m_pinned)
+                    if (!validMapped(w) || w->presentation().workspace() != owner.workspace || (w->m_state & Desktop::View::WINDOW_STATE_PINNED))
                         continue;
 
                     g_pHyprRenderer->damageWindow(w);
@@ -334,7 +331,8 @@ void CHyprAnimationManager::tick() {
             }
         }
 
-        if (!Fullscreen::controller()->hasFullscreen(owner.monitor))
+        const auto WORKSPACE = owner.monitor->getCurrentWorkspace();
+        if (!Fullscreen::controller()->getPresentedFullscreenWindow(WORKSPACE, Fullscreen::FSMODE_FULLSCREEN))
             owner.monitor->scheduleFrame(Aquamarine::IOutput::AQ_SCHEDULE_ANIMATION);
     }
 
@@ -344,7 +342,10 @@ void CHyprAnimationManager::tick() {
 void CHyprAnimationManager::frameTick() {
     onTicked();
 
-    if (!shouldTickForNext())
+    const bool MANUALTICK = m_manualTickRequested;
+    m_manualTickRequested = false;
+
+    if (!MANUALTICK && !shouldTickForNext())
         return;
 
     if UNLIKELY (!g_pCompositor->m_sessionActive || !std::ranges::any_of(State::monitorState()->monitors(), [](const auto& mon) { return mon->m_enabled && mon->m_output; }))
@@ -356,10 +357,16 @@ void CHyprAnimationManager::frameTick() {
 
         tick();
         Event::bus()->m_events.tick.emit();
-    }
+    } else if (MANUALTICK)
+        m_manualTickRequested = true;
 
-    if (shouldTickForNext())
+    if (m_manualTickRequested || shouldTickForNext())
         scheduleTick();
+}
+
+void CHyprAnimationManager::requestTick() {
+    m_manualTickRequested = true;
+    scheduleTick();
 }
 
 void CHyprAnimationManager::scheduleTick() {

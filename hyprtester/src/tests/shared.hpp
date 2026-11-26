@@ -6,7 +6,9 @@
 
 //NOLINTNEXTLINE
 namespace Tests {
+    [[nodiscard("Check whether kitty was spawned successfully or use the SPAWN_KITTY macro")]]
     Hyprutils::Memory::CUniquePointer<Hyprutils::OS::CProcess> spawnKitty(const std::string& class_ = "", const std::vector<std::string> args = {});
+    [[nodiscard("Check whether kitty was spawned successfully or use the SPAWN_LAYER_KITTY macro")]]
     Hyprutils::Memory::CUniquePointer<Hyprutils::OS::CProcess> spawnLayerKitty(const std::string& namespace_ = "", const std::vector<std::string> args = {});
     bool                                                       processAlive(pid_t pid);
     int                                                        windowCount();
@@ -16,6 +18,8 @@ namespace Tests {
     void                                                       waitUntilWindowsN(int n);
     int                                                        layerCount();
     bool                                                       killAllLayers();
+    void                                                       waitUntilLayersN(int n);
+
     std::string                                                execAndGet(const std::string& cmd);
     bool                                                       writeFile(const std::string& name, const std::string& contents);
     /**
@@ -25,4 +29,9 @@ namespace Tests {
      * For example, `Tests::getAttribute(getFromSocket("/activewindow"), "at")` returns the active window's coordinates, e.g., `"2,32"`
      */
     std::string getAttribute(const std::string& hyprlandResponse, std::string attr);
+
+    /**
+    * Extracts window ID from activeWindow output
+    */
+    std::string getWindowID(const std::string& hyprlandActiveWindowResponse);
 };

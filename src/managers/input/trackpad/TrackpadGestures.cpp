@@ -55,7 +55,7 @@ const char* CTrackpadGestures::stringForDir(eTrackpadGestureDirection dir) {
     return "ERROR";
 }
 
-std::expected<void, std::string> CTrackpadGestures::addGesture(UP<ITrackpadGesture>&& gesture, size_t fingerCount, eTrackpadGestureDirection direction, uint32_t modMask,
+std::expected<void, std::string> CTrackpadGestures::addGesture(UP<ITrackpadGesture>&& gesture, size_t fingerCount, eTrackpadGestureDirection direction, Input::ModifierMask modMask,
                                                                float deltaScale, bool disableInhibit) {
     for (const auto& g : m_gestures) {
         if (g->fingerCount != fingerCount)
@@ -91,7 +91,7 @@ std::expected<void, std::string> CTrackpadGestures::addGesture(UP<ITrackpadGestu
     return {};
 }
 
-std::expected<void, std::string> CTrackpadGestures::removeGesture(size_t fingerCount, eTrackpadGestureDirection direction, uint32_t modMask, float deltaScale,
+std::expected<void, std::string> CTrackpadGestures::removeGesture(size_t fingerCount, eTrackpadGestureDirection direction, Input::ModifierMask modMask, float deltaScale,
                                                                   bool disableInhibit) {
     const auto IT = std::ranges::find_if(m_gestures, [&](const auto& g) {
         return g->fingerCount == fingerCount && g->direction == direction && g->modMask == modMask && g->deltaScale == deltaScale && g->disableInhibit == disableInhibit;
@@ -107,7 +107,7 @@ std::expected<void, std::string> CTrackpadGestures::removeGesture(size_t fingerC
 
 void CTrackpadGestures::gestureBegin(const IPointer::SSwipeBeginEvent& e) {
     if (m_activeGesture) {
-        Log::logger->log(Log::ERR, "CTrackpadGestures::gestureBegin (swipe) but m_activeGesture is already present");
+        LOG(Log::ERR, "CTrackpadGestures::gestureBegin (swipe) but m_activeGesture is already present");
         return;
     }
 
@@ -118,7 +118,7 @@ void CTrackpadGestures::gestureBegin(const IPointer::SSwipeBeginEvent& e) {
 }
 
 void CTrackpadGestures::gestureUpdate(const IPointer::SSwipeUpdateEvent& e) {
-    static auto PDISABLEINHIBIT = CConfigValue<Config::INTEGER>("binds:disable_keybind_grabbing");
+    static auto PDISABLEINHIBIT = CConfigValue<Config::BOOL>("binds:disable_keybind_grabbing");
 
     if (m_gestureFindFailed)
         return;
@@ -127,7 +127,7 @@ void CTrackpadGestures::gestureUpdate(const IPointer::SSwipeUpdateEvent& e) {
 
     // 5 was chosen because I felt like that's a good number.
     if (!m_activeGesture && (std::abs(m_currentTotalDelta.x) < 5 && std::abs(m_currentTotalDelta.y) < 5)) {
-        Log::logger->log(Log::TRACE, "CTrackpadGestures::gestureUpdate (swipe): gesture delta too small to start considering, waiting");
+        LOG(Log::TRACE, "CTrackpadGestures::gestureUpdate (swipe): gesture delta too small to start considering, waiting");
         return;
     }
 
@@ -183,7 +183,7 @@ void CTrackpadGestures::gestureEnd(const IPointer::SSwipeEndEvent& e) {
 
 void CTrackpadGestures::gestureBegin(const IPointer::SPinchBeginEvent& e) {
     if (m_activeGesture) {
-        Log::logger->log(Log::ERR, "CTrackpadGestures::gestureBegin (pinch) but m_activeGesture is already present");
+        LOG(Log::ERR, "CTrackpadGestures::gestureBegin (pinch) but m_activeGesture is already present");
         return;
     }
 
@@ -193,14 +193,14 @@ void CTrackpadGestures::gestureBegin(const IPointer::SPinchBeginEvent& e) {
 }
 
 void CTrackpadGestures::gestureUpdate(const IPointer::SPinchUpdateEvent& e) {
-    static auto PDISABLEINHIBIT = CConfigValue<Config::INTEGER>("binds:disable_keybind_grabbing");
+    static auto PDISABLEINHIBIT = CConfigValue<Config::BOOL>("binds:disable_keybind_grabbing");
 
     if (m_gestureFindFailed)
         return;
 
     // 0.1 was chosen because I felt like that's a good number.
     if (!m_activeGesture && std::abs(e.scale - 1.F) < 0.1) {
-        Log::logger->log(Log::TRACE, "CTrackpadGestures::gestureUpdate (pinch): gesture delta too small to start considering, waiting");
+        LOG(Log::TRACE, "CTrackpadGestures::gestureUpdate (pinch): gesture delta too small to start considering, waiting");
         return;
     }
 
@@ -227,7 +227,7 @@ void CTrackpadGestures::gestureUpdate(const IPointer::SPinchUpdateEvent& e) {
 
             m_activeGesture     = g;
             g->currentDirection = g->gesture->isDirectionSensitive() ? g->direction : direction;
-            m_activeGesture->gesture->begin({.pinch = &e, .direction = direction});
+            m_activeGesture->gesture->begin({.pinch = &e, .direction = direction, .scale = g->deltaScale});
             break;
         }
 
@@ -237,14 +237,14 @@ void CTrackpadGestures::gestureUpdate(const IPointer::SPinchUpdateEvent& e) {
         }
     }
 
-    m_activeGesture->gesture->update({.pinch = &e, .direction = m_activeGesture->currentDirection});
+    m_activeGesture->gesture->update({.pinch = &e, .direction = m_activeGesture->currentDirection, .scale = m_activeGesture->deltaScale});
 }
 
 void CTrackpadGestures::gestureEnd(const IPointer::SPinchEndEvent& e) {
     if (!m_activeGesture)
         return;
 
-    m_activeGesture->gesture->end({.pinch = &e, .direction = m_activeGesture->direction});
+    m_activeGesture->gesture->end({.pinch = &e, .direction = m_activeGesture->direction, .scale = m_activeGesture->deltaScale});
 
     m_activeGesture.reset();
 }

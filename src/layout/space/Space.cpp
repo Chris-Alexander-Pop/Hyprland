@@ -1,10 +1,11 @@
 #include "Space.hpp"
 
 #include "../target/Target.hpp"
+#include "../target/WindowGeometry.hpp"
 #include "../algorithm/Algorithm.hpp"
 
 #include "../../debug/log/Logger.hpp"
-#include "../../desktop/Workspace.hpp"
+#include "../../workspace/HLWorkspace.hpp"
 #include "../../config/shared/workspace/WorkspaceRuleManager.hpp"
 #include "../../config/ConfigValue.hpp"
 #include "../../event/EventBus.hpp"
@@ -76,7 +77,7 @@ void CSpace::setAlgorithmProvider(SP<CAlgorithm> algo) {
 
 void CSpace::recheckWorkArea() {
     if (!m_parent || !m_parent->m_monitor) {
-        Log::logger->log(Log::ERR, "CSpace: recheckWorkArea on no parent / mon?!");
+        LOG(Log::ERR, "CSpace: recheckWorkArea on no parent / mon?!");
         return;
     }
 
@@ -92,7 +93,7 @@ void CSpace::recheckWorkArea() {
         PFLOATGAPS = PGAPSOUT;
 
     auto                   gapsOut   = WORKSPACERULE.m_gapsOut.value_or(*PGAPSOUT);
-    auto                   gapsFloat = WORKSPACERULE.m_gapsOut.value_or(*PFLOATGAPS);
+    auto                   gapsFloat = WORKSPACERULE.m_floatGaps.value_or(*PFLOATGAPS);
 
     Desktop::CReservedArea reservedGaps{gapsOut.m_top, gapsOut.m_right, gapsOut.m_bottom, gapsOut.m_left};
     Desktop::CReservedArea reservedFloatGaps{gapsFloat.m_top, gapsFloat.m_right, gapsFloat.m_bottom, gapsFloat.m_left};
@@ -100,10 +101,9 @@ void CSpace::recheckWorkArea() {
     auto                   floatWorkArea = workArea;
 
     reservedFloatGaps.applyip(floatWorkArea);
-    reservedGaps.applyip(workArea);
-
-    m_workArea         = workArea;
-    m_floatingWorkArea = floatWorkArea;
+    const auto PIXEL_GAPS = gapExtentsInPixels({{reservedGaps.left(), reservedGaps.top()}, {reservedGaps.right(), reservedGaps.bottom()}}, m_parent->m_monitor->m_scale);
+    m_workArea            = boxWithPixelGaps(workArea, PIXEL_GAPS, m_parent->m_monitor->m_position, m_parent->m_monitor->m_scale);
+    m_floatingWorkArea    = floatWorkArea;
 }
 
 const CBox& CSpace::workArea(bool floating) const {

@@ -29,21 +29,18 @@ CMonitorStateTracker::CMonitorStateTracker() {
     m_listeners.monitorRemoved = Event::bus()->m_events.monitor.removed.listen([this](PHLMONITOR m) { std::erase(m_monitors, m); });
 
     // keep track of mirrors
-    m_listeners.layoutChanged = Event::bus()->m_events.monitor.layoutChanged.listen([this]() {
-        std::erase_if(m_monitors, [](const auto& m) { return m->isMirror(); });
+    m_listeners.layoutChanged = Event::bus()->m_events.monitor.layoutChanged.listen([this]() { syncActiveMonitors(); });
+}
 
-        for (const auto& rm : m_realMonitors) {
-            if (!rm->m_enabled || rm->isMirror())
-                continue;
+void CMonitorStateTracker::syncActiveMonitors() {
+    m_monitors.clear();
 
-            const bool HAS = std::ranges::contains(m_monitors, rm);
+    for (const auto& rm : m_realMonitors) {
+        if (!rm->m_enabled || rm->isMirror())
+            continue;
 
-            if (HAS)
-                continue;
-
-            m_monitors.emplace_back(rm);
-        }
-    });
+        m_monitors.emplace_back(rm);
+    }
 }
 
 const std::vector<PHLMONITOR>& CMonitorStateTracker::allMonitors() const {
@@ -100,7 +97,7 @@ static void checkDefaultCursorWarp(PHLMONITOR monitor) {
     }
 
     // modechange happened check if cursor is on that monitor and warp it to middle to not place it out of bounds if resolution changed.
-    if (State::monitorState()->query().vec(Pointer::mgr()->position()).run() == monitor) {
+    if (State::monitorState()->query().vec(Pointer::mgr()->untransformedPosition()).run() == monitor) {
         Pointer::pointerController()->warpTo(POS, true);
         g_pInputManager->refocus();
     }
@@ -113,7 +110,7 @@ void CMonitorStateTracker::add(PHLMONITOR mon) {
 
     m_realMonitors.emplace_back(mon);
 
-    Log::logger->log(Log::DEBUG, "[CMonitorStateTracker] New monitor: {}", mon->m_name);
+    LOG(Log::DEBUG, "[CMonitorStateTracker] New monitor: {}", mon->m_name);
 
     Event::bus()->m_events.monitor.newMon.emit(mon);
 
@@ -139,7 +136,7 @@ void CMonitorStateTracker::add(PHLMONITOR mon) {
     mon->m_frameScheduler->onFrame();
 
     if (PROTO::colorManagement && g_pCompositor->shouldChangePreferredImageDescription()) {
-        Log::logger->log(Log::ERR, "FIXME: color management protocol is enabled, need a preferred image description id");
+        LOG(Log::ERR, "FIXME: color management protocol is enabled, need a preferred image description id");
         PROTO::colorManagement->onImagePreferredChanged(0);
     }
 }

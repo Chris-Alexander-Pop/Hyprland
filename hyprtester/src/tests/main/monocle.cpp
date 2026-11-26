@@ -1,7 +1,9 @@
 #include "../shared.hpp"
 #include "../../shared.hpp"
 #include "../../hyprctlCompat.hpp"
+#include <format>
 #include <string>
+#include <utility>
 #include <vector>
 #include "tests.hpp"
 
@@ -17,7 +19,7 @@ TEST_CASE(monocleWorkspaceRule) {
 
     // spawn 3 window, all should be compliant
 
-    Tests::spawnKitty("neutral_cat");
+    SPAWN_KITTY("neutral_cat");
     {
         auto str = getFromSocket("/activewindow");
         EXPECT_CONTAINS(str, "class: neutral_cat")
@@ -25,7 +27,7 @@ TEST_CASE(monocleWorkspaceRule) {
         EXPECT_CONTAINS(str, "at: 42,42")
     }
 
-    Tests::spawnKitty("happy_cat");
+    SPAWN_KITTY("happy_cat");
     {
         auto str = getFromSocket("/activewindow");
         EXPECT_CONTAINS(str, "class: happy_cat")
@@ -33,12 +35,27 @@ TEST_CASE(monocleWorkspaceRule) {
         EXPECT_CONTAINS(str, "at: 42,42")
     }
 
-    Tests::spawnKitty("angry_cat");
+    SPAWN_KITTY("angry_cat");
     {
         auto str = getFromSocket("/activewindow");
         EXPECT_CONTAINS(str, "class: angry_cat")
         EXPECT_CONTAINS(str, "size: 1836,996")
         EXPECT_CONTAINS(str, "at: 42,42")
+    }
+
+    // Cover both cycle directions and wraparounds, preserving focus history for the closing checks.
+    for (const auto& [command, windowClass] : {
+             std::pair{"cyclenext", "neutral_cat"},
+             std::pair{"cycleprev", "angry_cat"},
+             std::pair{"cycleprev", "happy_cat"},
+             std::pair{"cyclenext", "angry_cat"},
+         }) {
+        OK(getFromSocket(std::format("/dispatch hl.dsp.layout('{}')", command)));
+
+        const auto str = getFromSocket("/activewindow");
+        EXPECT_CONTAINS(str, std::format("class: {}", windowClass));
+        EXPECT_CONTAINS(str, "size: 1836,996");
+        EXPECT_CONTAINS(str, "at: 42,42");
     }
 
     // try closing a window, fallback window should be compliant
@@ -55,7 +72,7 @@ TEST_CASE(monocleWorkspaceRule) {
     }
 
     // re-open a window after killing
-    Tests::spawnKitty("angry_cat");
+    SPAWN_KITTY("angry_cat");
     {
         auto str = getFromSocket("/activewindow");
         EXPECT_CONTAINS(str, "class: angry_cat")
@@ -89,8 +106,8 @@ TEST_CASE(monocleFullscreenMaximiseDispatchers) {
 
     OK(getFromSocket("/eval hl.config({ general = { layout = 'monocle' } })"));
 
-    Tests::spawnKitty("kitty_A");
-    Tests::spawnKitty("kitty_B");
+    SPAWN_KITTY("kitty_A");
+    SPAWN_KITTY("kitty_B");
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:kitty_A' })"));
     OK(getFromSocket("/dispatch hl.dsp.window.fullscreen({ mode = 'fullscreen', action = 'set' })"));
@@ -165,8 +182,7 @@ TEST_CASE(monocleTestFsFocusUnderFSWindow) {
     OK(getFromSocket("r/eval hl.config({ general = { layout = 'monocle' } })"));
 
     for (auto const& win : {"one", "two", "three"}) {
-        if (!Tests::spawnKitty(win))
-            FAIL_TEST("Could not spawn kitty with win class `{}`", win);
+        SPAWN_KITTY(win);
     }
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:one' })"));
@@ -181,7 +197,7 @@ TEST_CASE(monocleTestFsFocusUnderFSWindow) {
 
     OK(getFromSocket("/eval hl.config({ misc = { on_focus_under_fullscreen = 1 } })"));
 
-    Tests::spawnKitty("four");
+    SPAWN_KITTY("four");
 
     {
         auto str = getFromSocket("/activewindow");
@@ -193,7 +209,7 @@ TEST_CASE(monocleTestFsFocusUnderFSWindow) {
 
     OK(getFromSocket("/eval hl.config({ misc = { on_focus_under_fullscreen = 0 } })"));
 
-    Tests::spawnKitty("ignored");
+    SPAWN_KITTY("ignored");
 
     {
         auto str = getFromSocket("/activewindow");
@@ -205,7 +221,7 @@ TEST_CASE(monocleTestFsFocusUnderFSWindow) {
 
     OK(getFromSocket("/eval hl.config({ misc = { on_focus_under_fullscreen = 2 } })"));
 
-    Tests::spawnKitty("erstarrwashere");
+    SPAWN_KITTY("erstarrwashere");
 
     {
         auto str = getFromSocket("/activewindow");
@@ -222,7 +238,7 @@ TEST_CASE(monocleNewWindowTakesOverFullscreen) {
 
     OK(getFromSocket("/eval hl.config({ misc = { on_focus_under_fullscreen = 0 } })"));
 
-    Tests::spawnKitty("kitty_A");
+    SPAWN_KITTY("kitty_A");
 
     OK(getFromSocket("/dispatch hl.dsp.window.fullscreen({ mode = 'fullscreen' })"));
 
@@ -233,7 +249,7 @@ TEST_CASE(monocleNewWindowTakesOverFullscreen) {
         EXPECT_CONTAINS(str, "kitty_A");
     }
 
-    Tests::spawnKitty("kitty_B");
+    SPAWN_KITTY("kitty_B");
 
     {
         auto str = getFromSocket("/activewindow");
@@ -254,7 +270,7 @@ TEST_CASE(monocleNewWindowTakesOverFullscreen) {
 
     OK(getFromSocket("/eval hl.config({ misc = { on_focus_under_fullscreen = 1 } })"));
 
-    Tests::spawnKitty("kitty_C");
+    SPAWN_KITTY("kitty_C");
 
     {
         auto str = getFromSocket("/activewindow");
@@ -265,7 +281,7 @@ TEST_CASE(monocleNewWindowTakesOverFullscreen) {
 
     OK(getFromSocket("/eval hl.config({ misc = { on_focus_under_fullscreen = 2 } })"));
 
-    Tests::spawnKitty("kitty_D");
+    SPAWN_KITTY("kitty_D");
 
     {
         auto str = getFromSocket("/activewindow");
@@ -287,8 +303,8 @@ TEST_CASE(monocleExitWindowRetainsFullscreen) {
 
     OK(getFromSocket("/eval hl.config({ misc = { exit_window_retains_fullscreen = false } })"));
 
-    Tests::spawnKitty("kitty_A");
-    Tests::spawnKitty("kitty_B");
+    SPAWN_KITTY("kitty_A");
+    SPAWN_KITTY("kitty_B");
 
     OK(getFromSocket("/dispatch hl.dsp.window.fullscreen({ mode = 'fullscreen' })"));
 
@@ -307,7 +323,7 @@ TEST_CASE(monocleExitWindowRetainsFullscreen) {
         EXPECT_CONTAINS(str, "fullscreenClient: 0");
     }
 
-    Tests::spawnKitty("kitty_B");
+    SPAWN_KITTY("kitty_B");
     OK(getFromSocket("/dispatch hl.dsp.window.fullscreen({ mode = 'fullscreen' })"));
     OK(getFromSocket("/eval hl.config({ misc = { exit_window_retains_fullscreen = true } })"));
 
@@ -338,7 +354,7 @@ TEST_CASE(monocleFullscreenPinnedWindows) {
 
     OK(getFromSocket("r/eval hl.config({ general = { layout = 'monocle' } })"));
 
-    Tests::spawnKitty("cake");
+    SPAWN_KITTY("cake");
 
     OK(getFromSocket("/dispatch hl.dsp.window.float({action = 'enable', window = 'class:cake'})"));
 
@@ -515,12 +531,12 @@ TEST_CASE(monocleFullscreenNonInterference) {
 
     OK(getFromSocket("r/eval hl.config({ general = { layout = 'monocle' } })"));
 
-    Tests::spawnKitty("red");
-    Tests::spawnKitty("crimson");
-    Tests::spawnKitty("blue");
-    Tests::spawnKitty("cyan");
-    Tests::spawnKitty("azure");
-    Tests::spawnKitty("green");
+    SPAWN_KITTY("red");
+    SPAWN_KITTY("crimson");
+    SPAWN_KITTY("blue");
+    SPAWN_KITTY("cyan");
+    SPAWN_KITTY("azure");
+    SPAWN_KITTY("green");
 
     OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:red' })"));
 

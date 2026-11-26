@@ -2,7 +2,8 @@
 
 #include "../../../../render/Renderer.hpp"
 #include "../../../../desktop/state/FocusState.hpp"
-#include "../../../../desktop/view/Window.hpp"
+#include "../../../../desktop/view/window/Window.hpp"
+#include "../../../../render/decorations/DecorationPositioner.hpp"
 #include "../../../../layout/LayoutManager.hpp"
 #include "../../../../layout/target/WindowTarget.hpp"
 
@@ -36,15 +37,16 @@ void CFloatTrackpadGesture::begin(const ITrackpadGesture::STrackpadGestureBegin&
     if (!m_window)
         return;
 
-    if ((m_window->m_isFloating && m_mode == FLOAT_MODE_FLOAT) || (!m_window->m_isFloating && m_mode == FLOAT_MODE_TILE)) {
+    if ((m_window->isFloating() && m_mode == FLOAT_MODE_FLOAT) || (!m_window->isFloating() && m_mode == FLOAT_MODE_TILE)) {
         m_window.reset();
         return;
     }
 
-    g_layoutManager->changeFloatingMode(m_window->layoutTarget());
+    m_posFrom  = m_window->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+    m_sizeFrom = m_window->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
 
-    m_posFrom  = m_window->positionAnimation()->begun();
-    m_sizeFrom = m_window->sizeAnimation()->begun();
+    g_layoutManager->changeFloatingMode(m_window->layoutTarget());
+    m_window->flushPendingGeometry();
 
     m_posTo  = m_window->position(Desktop::View::IGeometric::GEOMETRIC_GOAL);
     m_sizeTo = m_window->size(Desktop::View::IGeometric::GEOMETRIC_GOAL);

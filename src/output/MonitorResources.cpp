@@ -2,21 +2,45 @@
 #include "../managers/screenshare/ScreenshareManager.hpp"
 #include "../helpers/cm/ColorManagement.hpp"
 #include "../render/Renderer.hpp"
-#include <algorithm>
+#include "../render/SceneResources.hpp"
+#include "../render/OpenGL.hpp"
+#include "../config/ConfigValue.hpp"
+#include <cstdint>
 #include <format>
+#include <limits>
 
 using namespace Monitor;
 using namespace NColorManagement;
 
-static const int MAX_WORK_BUFFERS   = 8;
-static const int MAX_UNUSED_SECONDS = 5;
+static void prepareWorkBufferRelease() {
+    // Timer expiry also runs when no frame has made the rendering context current.
+    if (Render::GL::g_pHyprOpenGL)
+        Render::GL::g_pHyprOpenGL->makeEGLCurrent();
+}
 
 CMonitorResources::CMonitorResources(WP<CMonitor> monitor, DRMFormat format, Vector2D size, NColorManagement::PImageDescription imageDescription) :
-    m_stencilTex(g_pHyprRenderer->createStencilTexture(monitor->m_pixelSize.x, monitor->m_pixelSize.y)),
-    m_blurFB(g_pHyprRenderer->createFB(std::format("Monitor {} blur FB", monitor->m_name))), m_monitor(monitor), m_drmFormat(format), m_size(size),
-    m_imageDescription(imageDescription) {
+    m_stencilTex(g_pHyprRenderer->createStencilTexture(size.x, size.y)), m_blurFB(g_pHyprRenderer->createFB(std::format("Monitor {} blur FB", monitor->m_name))),
+    m_monitor(monitor), m_drmFormat(format), m_size(size), m_imageDescription(imageDescription),
+    m_workBuffers(
+        [this] {
+            auto buffer = g_pHyprRenderer->createFB(std::format("Monitor {} workbuffer", m_monitor->m_name));
+            if (buffer)
+                buffer->addStencil(m_stencilTex);
+            return buffer;
+        },
+        prepareWorkBufferRelease, std::numeric_limits<uint64_t>::max()),
+    m_sizedWorkBuffers([this] { return g_pHyprRenderer->createFB(std::format("Monitor {} sized workbuffer", m_monitor->m_name)); }, prepareWorkBufferRelease) {
     initFB(m_blurFB);
     monitor->m_blurFBDirty = true;
+    m_sceneResources       = makeShared<Render::CSceneResources>(monitor);
+}
+
+const SP<Render::CSceneResources>& CMonitorResources::sceneResources() const {
+    return m_sceneResources;
+}
+
+bool CMonitorResources::prepareSceneResources(Render::CSceneResources& resources) const {
+    return resources.prepare(m_size, m_drmFormat, m_imageDescription);
 }
 
 void CMonitorResources::initFB(SP<Render::IFramebuffer> fb) {
@@ -30,8 +54,8 @@ void CMonitorResources::setImageDescription(NColorManagement::PImageDescription 
         return;
     m_imageDescription = imageDescription;
     m_blurFB->setImageDescription(imageDescription);
-    for (const auto& res : m_workBuffers)
-        res.buffer->setImageDescription(imageDescription);
+    m_workBuffers.setImageDescription(imageDescription);
+    m_sizedWorkBuffers.setImageDescription(imageDescription);
     if (m_monitorMirrorFB)
         m_monitorMirrorFB->setImageDescription(getMirrorTexImageDescription());
     if (m_mirrorTex)
@@ -40,29 +64,23 @@ void CMonitorResources::setImageDescription(NColorManagement::PImageDescription 
 }
 
 SP<Render::IFramebuffer> CMonitorResources::getUnusedWorkBuffer() {
-    std::erase_if(m_workBuffers, [](const auto& res) { return res.lastUsed.getSeconds() >= MAX_UNUSED_SECONDS; });
+    return m_workBuffers.acquire(m_size, m_drmFormat, m_imageDescription);
+}
 
-    auto found = std::ranges::find_if(m_workBuffers, [](const auto& res) { return res.buffer.strongRef() < 2; });
-    if (found != m_workBuffers.end()) {
-        found->lastUsed.reset();
-        return found->buffer;
-    }
-    if (m_workBuffers.size() >= MAX_WORK_BUFFERS)
+SP<Render::IFramebuffer> CMonitorResources::getUnusedWorkBuffer(const Vector2D& size) {
+    return m_sizedWorkBuffers.acquire(size, m_drmFormat, m_imageDescription);
+}
+
+SP<Render::IFramebuffer> CMonitorResources::getUnusedWorkBuffer(DRMFormat format, NColorManagement::PImageDescription imageDescription, std::optional<Vector2D> size) {
+    if (!imageDescription)
         return nullptr;
 
-    auto& res = m_workBuffers.emplace_back(g_pHyprRenderer->createFB(std::format("Monitor {} workbuffer", m_monitor->m_name)));
-    initFB(res.buffer);
-    res.lastUsed.reset();
-    return res.buffer;
+    return size ? m_sizedWorkBuffers.acquire(*size, format, imageDescription, true) : m_workBuffers.acquire(m_size, format, imageDescription, true);
 }
 
 void CMonitorResources::forEachUnusedFB(std::function<void(SP<Render::IFramebuffer>)> callback, bool includeNamed) {
-    for (const auto& res : m_workBuffers) {
-        if (res.buffer.strongRef() > 1)
-            continue;
-
-        callback(res.buffer);
-    }
+    m_workBuffers.forEachUnused(callback);
+    m_sizedWorkBuffers.forEachUnused(callback);
     if (includeNamed) {
         if (m_blurFB && m_blurFB->isAllocated() && m_blurFB.strongRef() < 2)
             callback(m_blurFB);
@@ -162,4 +180,18 @@ void CMonitorResources::disableMirror() {
     if (m_mirrorTex)
         m_monitor->m_blurFBDirty = true;
     m_mirrorTex.reset();
+}
+
+void CMonitorResources::refreshBlurFB() {
+    static auto PBLURENABLED = CConfigValue<Config::BOOL>("decoration:blur:enabled");
+
+    // TODO: this is super naive. It does free VRAM, but I don't want to make an auto-initializing wrapper
+    // for now and this is good enough.
+    if (!*PBLURENABLED) {
+        m_blurFB->addStencil(nullptr);
+        m_blurFB->alloc(1, 1, m_drmFormat);
+    } else {
+        m_blurFB->addStencil(m_stencilTex);
+        m_blurFB->alloc(m_size.x, m_size.y, m_drmFormat);
+    }
 }

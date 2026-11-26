@@ -26,13 +26,11 @@ namespace Config {
 
         std::string                        m_monitor         = "";
         std::string                        m_workspaceString = "";
-        std::string                        m_workspaceName   = "";
-        WORKSPACEID                        m_workspaceId     = -1;
         std::optional<bool>                m_isDefault;
         std::optional<bool>                m_isPersistent;
         std::optional<CCssGapData>         m_gapsIn;
         std::optional<CCssGapData>         m_gapsOut;
-        std::optional<CCssGapData>         m_floatGaps = m_gapsOut;
+        std::optional<CCssGapData>         m_floatGaps;
         std::optional<int64_t>             m_borderSize;
         std::optional<bool>                m_decorate;
         std::optional<bool>                m_noRounding;

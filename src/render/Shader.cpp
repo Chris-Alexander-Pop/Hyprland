@@ -42,7 +42,7 @@ void CShader::logShaderError(const GLuint& shader, bool program, bool silent) {
 
     const auto  FULLERROR = (program ? "Screen shader parser: Error linking program:" : "Screen shader parser: Error compiling shader: ") + errorStr;
 
-    Log::logger->log(Log::ERR, "Failed to link shader: {}", FULLERROR);
+    LOG(Log::ERR, "Failed to link shader: {}", FULLERROR);
 
     if (!silent)
         ErrorOverlay::overlay()->queueError(FULLERROR);
@@ -131,13 +131,10 @@ void CShader::getUniformLocations() {
     m_uniformLocations[SHADER_TEX_TYPE]    = getUniform("texType");
 
     // shader has #include "CM.glsl"
-    m_uniformLocations[SHADER_SOURCE_TF]            = getUniform("sourceTF");
-    m_uniformLocations[SHADER_TARGET_TF]            = getUniform("targetTF");
     m_uniformLocations[SHADER_SRC_TF_RANGE]         = getUniform("srcTFRange");
     m_uniformLocations[SHADER_DST_TF_RANGE]         = getUniform("dstTFRange");
     m_uniformLocations[SHADER_TARGET_PRIMARIES_XYZ] = getUniform("targetPrimariesXYZ");
     m_uniformLocations[SHADER_MAX_LUMINANCE]        = getUniform("maxLuminance");
-    m_uniformLocations[SHADER_SRC_REF_LUMINANCE]    = getUniform("srcRefLuminance");
     m_uniformLocations[SHADER_DST_MAX_LUMINANCE]    = getUniform("dstMaxLuminance");
     m_uniformLocations[SHADER_DST_REF_LUMINANCE]    = getUniform("dstRefLuminance");
     m_uniformLocations[SHADER_SDR_SATURATION]       = getUniform("sdrSaturation");
@@ -147,28 +144,30 @@ void CShader::getUniformLocations() {
     m_uniformLocations[SHADER_LUT_SIZE]             = getUniform("iccLutSize");
     m_uniformLocations[SHADER_TONEMAP_MODE]         = getUniform("tonemapMode");
     //
-    m_uniformLocations[SHADER_TEX]                    = getUniform("tex");
-    m_uniformLocations[SHADER_BLURRED_BG]             = getUniform("blurredBG");
-    m_uniformLocations[SHADER_UV_SIZE]                = getUniform("uvSize");
-    m_uniformLocations[SHADER_UV_OFFSET]              = getUniform("uvOffset");
-    m_uniformLocations[SHADER_MOTION_PREV_BOX]        = getUniform("motionPrevBox");
-    m_uniformLocations[SHADER_MOTION_CURR_BOX]        = getUniform("motionCurrBox");
-    m_uniformLocations[SHADER_MOTION_SOURCE_BOX]      = getUniform("motionSourceBox");
-    m_uniformLocations[SHADER_MOTION_SOURCE_TEX_SIZE] = getUniform("motionSourceTexSize");
-    m_uniformLocations[SHADER_MOTION_SAMPLES]         = getUniform("motionSamples");
-    m_uniformLocations[SHADER_BLUR_ALPHA_MATTE]       = getUniform("blurAlphaMatte");
-    m_uniformLocations[SHADER_BLUR_ALPHA]             = getUniform("blurAlpha");
-    m_uniformLocations[SHADER_ALPHA]                  = getUniform("alpha");
-    m_uniformLocations[SHADER_POS_ATTRIB]             = getAttrib("pos");
-    m_uniformLocations[SHADER_TEX_ATTRIB]             = getAttrib("texcoord");
-    m_uniformLocations[SHADER_MATTE_TEX_ATTRIB]       = getAttrib("texcoordMatte");
-    m_uniformLocations[SHADER_DISCARD_OPAQUE]         = getUniform("discardOpaque");
-    m_uniformLocations[SHADER_DISCARD_ALPHA]          = getUniform("discardAlpha");
-    m_uniformLocations[SHADER_DISCARD_ALPHA_VALUE]    = getUniform("discardAlphaValue");
+    m_uniformLocations[SHADER_TEX]                      = getUniform("tex");
+    m_uniformLocations[SHADER_BLURRED_BG]               = getUniform("blurredBG");
+    m_uniformLocations[SHADER_UV_SIZE]                  = getUniform("uvSize");
+    m_uniformLocations[SHADER_UV_OFFSET]                = getUniform("uvOffset");
+    m_uniformLocations[SHADER_MOTION_PREV_BOX]          = getUniform("motionPrevBox");
+    m_uniformLocations[SHADER_MOTION_CURR_BOX]          = getUniform("motionCurrBox");
+    m_uniformLocations[SHADER_MOTION_SOURCE_BOX]        = getUniform("motionSourceBox");
+    m_uniformLocations[SHADER_MOTION_SOURCE_TEX_ORIGIN] = getUniform("motionSourceTexOrigin");
+    m_uniformLocations[SHADER_MOTION_SOURCE_TEX_SIZE]   = getUniform("motionSourceTexSize");
+    m_uniformLocations[SHADER_MOTION_SAMPLES]           = getUniform("motionSamples");
+    m_uniformLocations[SHADER_BLUR_ALPHA_MATTE]         = getUniform("blurAlphaMatte");
+    m_uniformLocations[SHADER_BLUR_ALPHA]               = getUniform("blurAlpha");
+    m_uniformLocations[SHADER_ALPHA]                    = getUniform("alpha");
+    m_uniformLocations[SHADER_POS_ATTRIB]               = getAttrib("pos");
+    m_uniformLocations[SHADER_TEX_ATTRIB]               = getAttrib("texcoord");
+    m_uniformLocations[SHADER_MATTE_TEX_ATTRIB]         = getAttrib("texcoordMatte");
+    m_uniformLocations[SHADER_DISCARD_OPAQUE]           = getUniform("discardOpaque");
+    m_uniformLocations[SHADER_DISCARD_ALPHA]            = getUniform("discardAlpha");
+    m_uniformLocations[SHADER_DISCARD_ALPHA_VALUE]      = getUniform("discardAlphaValue");
     /* set in createVao
         m_uniformLocations[SHADER_SHADER_VAO]
-        m_uniformLocations[SHADER_SHADER_VBO_POS]
-        m_uniformLocations[SHADER_SHADER_VBO_UV]
+        m_uniformLocations[SHADER_SHADER_VBO]
+        m_uniformLocations[SHADER_SHADER_UV_VAO]
+        m_uniformLocations[SHADER_SHADER_UV_VBO]
         */
     m_uniformLocations[SHADER_TOP_LEFT]            = getUniform("topLeft");
     m_uniformLocations[SHADER_BOTTOM_RIGHT]        = getUniform("bottomRight");
@@ -183,78 +182,164 @@ void CShader::getUniformLocations() {
         fullSize = getUniform("screenSize");
     m_uniformLocations[SHADER_FULL_SIZE] = fullSize;
 
-    m_uniformLocations[SHADER_FULL_SIZE_UNTRANSFORMED]   = getUniform("fullSizeUntransformed");
-    m_uniformLocations[SHADER_RADIUS]                    = getUniform("radius");
-    m_uniformLocations[SHADER_RADIUS_OUTER]              = getUniform("radiusOuter");
-    m_uniformLocations[SHADER_ROUNDING_POWER]            = getUniform("roundingPower");
-    m_uniformLocations[SHADER_THICK]                     = getUniform("thick");
-    m_uniformLocations[SHADER_HALFPIXEL]                 = getUniform("halfpixel");
-    m_uniformLocations[SHADER_RANGE]                     = getUniform("range");
-    m_uniformLocations[SHADER_SHADOW_POWER]              = getUniform("shadowPower");
-    m_uniformLocations[SHADER_USE_ALPHA_MATTE]           = getUniform("useAlphaMatte");
-    m_uniformLocations[SHADER_APPLY_TINT]                = getUniform("applyTint");
-    m_uniformLocations[SHADER_TINT]                      = getUniform("tint");
-    m_uniformLocations[SHADER_GRADIENT]                  = getUniform("gradient");
-    m_uniformLocations[SHADER_GRADIENT_LENGTH]           = getUniform("gradientLength");
-    m_uniformLocations[SHADER_GRADIENT2]                 = getUniform("gradient2");
-    m_uniformLocations[SHADER_GRADIENT2_LENGTH]          = getUniform("gradient2Length");
-    m_uniformLocations[SHADER_ANGLE]                     = getUniform("angle");
-    m_uniformLocations[SHADER_ANGLE2]                    = getUniform("angle2");
-    m_uniformLocations[SHADER_GRADIENT_LERP]             = getUniform("gradientLerp");
-    m_uniformLocations[SHADER_TIME]                      = getUniform("time");
-    m_uniformLocations[SHADER_DISTORT]                   = getUniform("distort");
-    m_uniformLocations[SHADER_WL_OUTPUT]                 = getUniform("wl_output");
-    m_uniformLocations[SHADER_CONTRAST]                  = getUniform("contrast");
-    m_uniformLocations[SHADER_PASSES]                    = getUniform("passes");
-    m_uniformLocations[SHADER_VIBRANCY]                  = getUniform("vibrancy");
-    m_uniformLocations[SHADER_VIBRANCY_DARKNESS]         = getUniform("vibrancy_darkness");
-    m_uniformLocations[SHADER_BRIGHTNESS]                = getUniform("brightness");
-    m_uniformLocations[SHADER_NOISE]                     = getUniform("noise");
-    m_uniformLocations[SHADER_POINTER]                   = getUniform("pointer_position");
-    m_uniformLocations[SHADER_POINTER_SHAPE]             = getUniform("pointer_shape");
-    m_uniformLocations[SHADER_POINTER_SWITCH_TIME]       = getUniform("pointer_switch_time");
-    m_uniformLocations[SHADER_POINTER_SHAPE_PREVIOUS]    = getUniform("pointer_shape_previous");
-    m_uniformLocations[SHADER_POINTER_PRESSED_POSITIONS] = getUniform("pointer_pressed_positions");
-    m_uniformLocations[SHADER_POINTER_HIDDEN]            = getUniform("pointer_hidden");
-    m_uniformLocations[SHADER_POINTER_KILLING]           = getUniform("pointer_killing");
-    m_uniformLocations[SHADER_POINTER_PRESSED_TIMES]     = getUniform("pointer_pressed_times");
-    m_uniformLocations[SHADER_POINTER_PRESSED_KILLED]    = getUniform("pointer_pressed_killed");
-    m_uniformLocations[SHADER_POINTER_PRESSED_TOUCHED]   = getUniform("pointer_pressed_touched");
-    m_uniformLocations[SHADER_POINTER_INACTIVE_TIMEOUT]  = getUniform("pointer_inactive_timeout");
-    m_uniformLocations[SHADER_POINTER_LAST_ACTIVE]       = getUniform("pointer_last_active");
-    m_uniformLocations[SHADER_POINTER_SIZE]              = getUniform("pointer_size");
+    m_uniformLocations[SHADER_FULL_SIZE_UNTRANSFORMED]     = getUniform("fullSizeUntransformed");
+    m_uniformLocations[SHADER_RADIUS]                      = getUniform("radius");
+    m_uniformLocations[SHADER_RADIUS_OUTER]                = getUniform("radiusOuter");
+    m_uniformLocations[SHADER_ROUNDING_POWER]              = getUniform("roundingPower");
+    m_uniformLocations[SHADER_THICK]                       = getUniform("thick");
+    m_uniformLocations[SHADER_HALFPIXEL]                   = getUniform("halfpixel");
+    m_uniformLocations[SHADER_RANGE]                       = getUniform("range");
+    m_uniformLocations[SHADER_SHADOW_POWER]                = getUniform("shadowPower");
+    m_uniformLocations[SHADER_USE_ALPHA_MATTE]             = getUniform("useAlphaMatte");
+    m_uniformLocations[SHADER_APPLY_TINT]                  = getUniform("applyTint");
+    m_uniformLocations[SHADER_TINT]                        = getUniform("tint");
+    m_uniformLocations[SHADER_GRADIENT]                    = getUniform("gradient");
+    m_uniformLocations[SHADER_GRADIENT_LENGTH]             = getUniform("gradientLength");
+    m_uniformLocations[SHADER_GRADIENT2]                   = getUniform("gradient2");
+    m_uniformLocations[SHADER_GRADIENT2_LENGTH]            = getUniform("gradient2Length");
+    m_uniformLocations[SHADER_ANGLE]                       = getUniform("angle");
+    m_uniformLocations[SHADER_ANGLE2]                      = getUniform("angle2");
+    m_uniformLocations[SHADER_GRADIENT_LERP]               = getUniform("gradientLerp");
+    m_uniformLocations[SHADER_GRADIENT_UV]                 = getUniform("gradientUV");
+    m_uniformLocations[SHADER_GRADIENT2_UV]                = getUniform("gradient2UV");
+    m_uniformLocations[SHADER_TIME]                        = getUniform("time");
+    m_uniformLocations[SHADER_DISTORT]                     = getUniform("distort");
+    m_uniformLocations[SHADER_WL_OUTPUT]                   = getUniform("wl_output");
+    m_uniformLocations[SHADER_CONTRAST]                    = getUniform("contrast");
+    m_uniformLocations[SHADER_PASSES]                      = getUniform("passes");
+    m_uniformLocations[SHADER_VIBRANCY]                    = getUniform("vibrancy");
+    m_uniformLocations[SHADER_VIBRANCY_DARKNESS]           = getUniform("vibrancy_darkness");
+    m_uniformLocations[SHADER_BRIGHTNESS]                  = getUniform("brightness");
+    m_uniformLocations[SHADER_NOISE]                       = getUniform("noise");
+    m_uniformLocations[SHADER_GLASS_REFRACTION]            = getUniform("glassRefraction");
+    m_uniformLocations[SHADER_GLASS_SIZE]                  = getUniform("glassSize");
+    m_uniformLocations[SHADER_GLASS_ROUGHNESS]             = getUniform("glassRoughness");
+    m_uniformLocations[SHADER_GLASS_POSITION]              = getUniform("glassPosition");
+    m_uniformLocations[SHADER_DROPS_POSITION]              = getUniform("dropsPosition");
+    m_uniformLocations[SHADER_SHARP_TEX]                   = getUniform("sharpTex");
+    m_uniformLocations[SHADER_RIPPLE_COUNT]                = getUniform("rippleCount");
+    m_uniformLocations[SHADER_RIPPLE_IMPULSES]             = getUniform("rippleImpulses[0]");
+    m_uniformLocations[SHADER_RIPPLE_PARAMS]               = getUniform("rippleParams");
+    m_uniformLocations[SHADER_WATER_ENABLED]               = getUniform("waterEnabled");
+    m_uniformLocations[SHADER_WATER_STATE_TEX]             = getUniform("waterStateTex");
+    m_uniformLocations[SHADER_WATER_TEXEL_SIZE]            = getUniform("waterTexelSize");
+    m_uniformLocations[SHADER_WATER_EXTENT]                = getUniform("waterExtent");
+    m_uniformLocations[SHADER_WATER_REFRACTION]            = getUniform("waterRefraction");
+    m_uniformLocations[SHADER_WATER_PARAMS]                = getUniform("waterParams");
+    m_uniformLocations[SHADER_WATER_IMPULSE_COUNT]         = getUniform("waterImpulseCount");
+    m_uniformLocations[SHADER_WATER_IMPULSES]              = getUniform("waterImpulses[0]");
+    m_uniformLocations[SHADER_FLUIDJAR_PARTICLE_TEX]       = getUniform("fluidJarParticleTex");
+    m_uniformLocations[SHADER_FLUIDJAR_GRAPH_TEX]          = getUniform("fluidJarGraphTex");
+    m_uniformLocations[SHADER_FLUIDJAR_TRACKING_TEX]       = getUniform("fluidJarTrackingTex");
+    m_uniformLocations[SHADER_FLUIDJAR_VISUAL_TEX]         = getUniform("fluidJarVisualTex");
+    m_uniformLocations[SHADER_FLUIDJAR_RESOLUTION]         = getUniform("fluidJarResolution");
+    m_uniformLocations[SHADER_FLUIDJAR_GRID_SIZE]          = getUniform("fluidJarGridSize");
+    m_uniformLocations[SHADER_FLUIDJAR_PARTICLE_COUNT]     = getUniform("fluidJarParticleCount");
+    m_uniformLocations[SHADER_FLUIDJAR_FRAME]              = getUniform("fluidJarFrame");
+    m_uniformLocations[SHADER_FLUIDJAR_DT]                 = getUniform("fluidJarDt");
+    m_uniformLocations[SHADER_FLUIDJAR_MASS]               = getUniform("fluidJarMass");
+    m_uniformLocations[SHADER_FLUIDJAR_OLD_RESOLUTION]     = getUniform("fluidJarOldResolution");
+    m_uniformLocations[SHADER_FLUIDJAR_OLD_GRID_SIZE]      = getUniform("fluidJarOldGridSize");
+    m_uniformLocations[SHADER_FLUIDJAR_OLD_PARTICLE_COUNT] = getUniform("fluidJarOldParticleCount");
+    m_uniformLocations[SHADER_FLUIDJAR_TRANSFORM]          = getUniform("fluidJarTransform");
+    m_uniformLocations[SHADER_FLUIDJAR_VELOCITY_SCALE]     = getUniform("fluidJarVelocityScale");
+    m_uniformLocations[SHADER_FLUIDJAR_WALL_VELOCITIES]    = getUniform("fluidJarWallVelocities");
+    m_uniformLocations[SHADER_FLUIDJAR_HISTORY_TEX]        = getUniform("fluidJarHistoryTex");
+    m_uniformLocations[SHADER_FLUIDJAR_HISTORY_TRANSFORM]  = getUniform("fluidJarHistoryTransform");
+    m_uniformLocations[SHADER_FLUIDJAR_HISTORY_FALLBACK]   = getUniform("fluidJarHistoryFallback");
+    m_uniformLocations[SHADER_FLUIDJAR_EXTENT]             = getUniform("fluidJarExtent");
+    m_uniformLocations[SHADER_FLUIDJAR_OUTPUT_TRANSFORM]   = getUniform("fluidJarOutputTransform");
+    m_uniformLocations[SHADER_FLUIDJAR_OUTPUT_OFFSET]      = getUniform("fluidJarOutputOffset");
+    m_uniformLocations[SHADER_FLUIDJAR_LOGICAL_SIZE]       = getUniform("fluidJarLogicalSize");
+    m_uniformLocations[SHADER_FLUIDJAR_COLOR]              = getUniform("fluidJarColor");
+    m_uniformLocations[SHADER_FLUIDJAR_REFRACTION]         = getUniform("fluidJarRefraction");
+    m_uniformLocations[SHADER_FLUIDJAR_TRANSFER_FUNCTION]  = getUniform("fluidJarTransferFunction");
+    m_uniformLocations[SHADER_FLUIDJAR_VISUAL_RESPONSE]    = getUniform("fluidJarVisualResponse");
+    m_uniformLocations[SHADER_FLUIDJAR_STRENGTH]           = getUniform("fluidJarStrength");
+    m_uniformLocations[SHADER_FLUIDJAR_TURBULENCE]         = getUniform("fluidJarTurbulence");
+    m_uniformLocations[SHADER_FLUIDJAR_DISTORTION]         = getUniform("fluidJarDistortion");
+    m_uniformLocations[SHADER_FLUIDJAR_ENABLED]            = getUniform("fluidJarEnabled");
+    m_uniformLocations[SHADER_ACRYLIC_ENABLED]             = getUniform("acrylicEnabled");
+    m_uniformLocations[SHADER_ACRYLIC_EXTENT]              = getUniform("acrylicExtent");
+    m_uniformLocations[SHADER_ACRYLIC_RADIUS]              = getUniform("acrylicRadius");
+    m_uniformLocations[SHADER_ACRYLIC_ROUNDING_POWER]      = getUniform("acrylicRoundingPower");
+    m_uniformLocations[SHADER_ACRYLIC_REFRACTION]          = getUniform("acrylicRefraction");
+    m_uniformLocations[SHADER_ACRYLIC_BULB]                = getUniform("acrylicBulb");
+    m_uniformLocations[SHADER_ACRYLIC_CLARITY]             = getUniform("acrylicClarity");
+    m_uniformLocations[SHADER_ACRYLIC_ABERRATION]          = getUniform("acrylicAberration");
+    m_uniformLocations[SHADER_ACRYLIC_TINT]                = getUniform("acrylicTint");
+    m_uniformLocations[SHADER_ACRYLIC_STRENGTH]            = getUniform("acrylicStrength");
+    m_uniformLocations[SHADER_ACRYLIC_TRANSFER_FUNCTION]   = getUniform("acrylicTransferFunction");
+    m_uniformLocations[SHADER_ACRYLIC_LUMINANCE_SCALE]     = getUniform("acrylicLuminanceScale");
+    m_uniformLocations[SHADER_AURORA_INTENSITY]            = getUniform("auroraIntensity");
+    m_uniformLocations[SHADER_AURORA_COLOR1]               = getUniform("auroraColor1");
+    m_uniformLocations[SHADER_AURORA_COLOR2]               = getUniform("auroraColor2");
+    m_uniformLocations[SHADER_AURORA_TRANSFER_FUNCTION]    = getUniform("auroraTransferFunction");
+    m_uniformLocations[SHADER_HAZE_INTENSITY]              = getUniform("hazeIntensity");
+    m_uniformLocations[SHADER_HAZE_IRIDESCENCE]            = getUniform("hazeIridescence");
+    m_uniformLocations[SHADER_HAZE_TRANSFER_FUNCTION]      = getUniform("hazeTransferFunction");
+    m_uniformLocations[SHADER_POINTER]                     = getUniform("pointer_position");
+    m_uniformLocations[SHADER_POINTER_SHAPE]               = getUniform("pointer_shape");
+    m_uniformLocations[SHADER_POINTER_SWITCH_TIME]         = getUniform("pointer_switch_time");
+    m_uniformLocations[SHADER_POINTER_SHAPE_PREVIOUS]      = getUniform("pointer_shape_previous");
+    m_uniformLocations[SHADER_POINTER_PRESSED_POSITIONS]   = getUniform("pointer_pressed_positions");
+    m_uniformLocations[SHADER_POINTER_HIDDEN]              = getUniform("pointer_hidden");
+    m_uniformLocations[SHADER_POINTER_KILLING]             = getUniform("pointer_killing");
+    m_uniformLocations[SHADER_POINTER_PRESSED_TIMES]       = getUniform("pointer_pressed_times");
+    m_uniformLocations[SHADER_POINTER_PRESSED_KILLED]      = getUniform("pointer_pressed_killed");
+    m_uniformLocations[SHADER_POINTER_PRESSED_TOUCHED]     = getUniform("pointer_pressed_touched");
+    m_uniformLocations[SHADER_POINTER_INACTIVE_TIMEOUT]    = getUniform("pointer_inactive_timeout");
+    m_uniformLocations[SHADER_POINTER_LAST_ACTIVE]         = getUniform("pointer_last_active");
+    m_uniformLocations[SHADER_POINTER_SIZE]                = getUniform("pointer_size");
 }
 
 void CShader::createVao() {
-    GLuint shaderVao = 0, shaderVbo = 0;
+    GLuint shaderVao = 0, shaderVbo = 0, shaderUvVao = 0, shaderUvVbo = 0;
 
     glGenVertexArrays(1, &shaderVao);
     glBindVertexArray(shaderVao);
 
     if (m_uniformLocations[SHADER_POS_ATTRIB] != -1) {
         glGenBuffers(1, &shaderVbo);
-        glBindBuffer(GL_ARRAY_BUFFER, shaderVbo);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(fullVerts), fullVerts.data(), GL_DYNAMIC_DRAW);
+        g_pHyprOpenGL->bindArrayBuffer(shaderVbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(fullVerts), fullVerts.data(), GL_STATIC_DRAW);
         glEnableVertexAttribArray(m_uniformLocations[SHADER_POS_ATTRIB]);
         glVertexAttribPointer(m_uniformLocations[SHADER_POS_ATTRIB], 2, GL_FLOAT, GL_FALSE, sizeof(SVertex), (void*)offsetof(SVertex, x));
     }
 
-    // UV VBO (dynamic, may be updated per frame)
+    // UV VBO (static, default UVs never change)
     if (m_uniformLocations[SHADER_TEX_ATTRIB] != -1 && shaderVbo != 0) {
-        glBindBuffer(GL_ARRAY_BUFFER, shaderVbo);
+        g_pHyprOpenGL->bindArrayBuffer(shaderVbo);
+        glEnableVertexAttribArray(m_uniformLocations[SHADER_TEX_ATTRIB]);
+        glVertexAttribPointer(m_uniformLocations[SHADER_TEX_ATTRIB], 2, GL_FLOAT, GL_FALSE, sizeof(SVertex), (void*)offsetof(SVertex, u));
+    }
+
+    // second, streamed pair, only bound by draws that override the UVs
+    if (m_uniformLocations[SHADER_TEX_ATTRIB] != -1 && shaderVbo != 0) {
+        glGenVertexArrays(1, &shaderUvVao);
+        glBindVertexArray(shaderUvVao);
+
+        glGenBuffers(1, &shaderUvVbo);
+        g_pHyprOpenGL->bindArrayBuffer(shaderUvVbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(fullVerts), fullVerts.data(), GL_DYNAMIC_DRAW);
+        glEnableVertexAttribArray(m_uniformLocations[SHADER_POS_ATTRIB]);
+        glVertexAttribPointer(m_uniformLocations[SHADER_POS_ATTRIB], 2, GL_FLOAT, GL_FALSE, sizeof(SVertex), (void*)offsetof(SVertex, x));
         glEnableVertexAttribArray(m_uniformLocations[SHADER_TEX_ATTRIB]);
         glVertexAttribPointer(m_uniformLocations[SHADER_TEX_ATTRIB], 2, GL_FLOAT, GL_FALSE, sizeof(SVertex), (void*)offsetof(SVertex, u));
     }
 
     glBindVertexArray(0);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    g_pHyprOpenGL->bindArrayBuffer(0);
 
-    m_uniformLocations[SHADER_SHADER_VAO] = shaderVao;
-    m_uniformLocations[SHADER_SHADER_VBO] = shaderVbo;
-    m_usesCustomUV                        = false;
+    m_uniformLocations[SHADER_SHADER_VAO]    = shaderVao;
+    m_uniformLocations[SHADER_SHADER_VBO]    = shaderVbo;
+    m_uniformLocations[SHADER_SHADER_UV_VAO] = shaderUvVao;
+    m_uniformLocations[SHADER_SHADER_UV_VBO] = shaderUvVbo;
 
     RASSERT(m_uniformLocations[SHADER_SHADER_VAO] >= 0, "SHADER_SHADER_VAO could not be created");
-    RASSERT(m_uniformLocations[SHADER_SHADER_VBO] >= 0, "SHADER_SHADER_VBO_POS could not be created");
+    RASSERT(m_uniformLocations[SHADER_SHADER_VBO] >= 0, "SHADER_SHADER_VBO could not be created");
+    RASSERT(m_uniformLocations[SHADER_SHADER_UV_VAO] >= 0, "SHADER_SHADER_UV_VAO could not be created");
+    RASSERT(m_uniformLocations[SHADER_SHADER_UV_VBO] >= 0, "SHADER_SHADER_UV_VBO could not be created");
 }
 
 void CShader::setUniformInt(eShaderUniform location, GLint v0) {
@@ -406,16 +491,26 @@ void CShader::destroy() {
     if (m_program == 0)
         return;
 
-    GLuint shaderVao, shaderVbo;
+    GLuint shaderVao, shaderVbo, shaderUvVao, shaderUvVbo;
 
-    shaderVao = m_uniformLocations[SHADER_SHADER_VAO] == -1 ? 0 : m_uniformLocations[SHADER_SHADER_VAO];
-    shaderVbo = m_uniformLocations[SHADER_SHADER_VBO] == -1 ? 0 : m_uniformLocations[SHADER_SHADER_VBO];
+    shaderVao   = m_uniformLocations[SHADER_SHADER_VAO] == -1 ? 0 : m_uniformLocations[SHADER_SHADER_VAO];
+    shaderVbo   = m_uniformLocations[SHADER_SHADER_VBO] == -1 ? 0 : m_uniformLocations[SHADER_SHADER_VBO];
+    shaderUvVao = m_uniformLocations[SHADER_SHADER_UV_VAO] == -1 ? 0 : m_uniformLocations[SHADER_SHADER_UV_VAO];
+    shaderUvVbo = m_uniformLocations[SHADER_SHADER_UV_VBO] == -1 ? 0 : m_uniformLocations[SHADER_SHADER_UV_VBO];
+
+    g_pHyprOpenGL->bindArrayBuffer(0);
 
     if (shaderVao)
         glDeleteVertexArrays(1, &shaderVao);
 
     if (shaderVbo)
         glDeleteBuffers(1, &shaderVbo);
+
+    if (shaderUvVao)
+        glDeleteVertexArrays(1, &shaderUvVao);
+
+    if (shaderUvVbo)
+        glDeleteBuffers(1, &shaderUvVbo);
 
     glDeleteProgram(m_program);
     m_program = 0;
@@ -435,12 +530,4 @@ int CShader::getInitialTime() const {
 
 void CShader::setInitialTime(int time) {
     m_initialTime = time;
-}
-
-bool CShader::usesCustomUV() const {
-    return m_usesCustomUV;
-}
-
-void CShader::setUsesCustomUV(bool usesCustomUV) {
-    m_usesCustomUV = usesCustomUV;
 }

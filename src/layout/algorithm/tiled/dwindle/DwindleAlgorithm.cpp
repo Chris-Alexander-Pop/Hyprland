@@ -1,4 +1,6 @@
 #include "DwindleAlgorithm.hpp"
+#include "../../../../helpers/MiscFunctions.hpp"
+#include "../../../../desktop/view/window/WindowPresentation.hpp"
 
 #include "../../Algorithm.hpp"
 #include "../../../space/Space.hpp"
@@ -25,12 +27,12 @@ using namespace Hyprutils::String;
 
 void SDwindleNodeData::recalcSizePosRecursive(bool force, bool horizontalOverride, bool verticalOverride) {
     if (children[0]) {
-        static auto PSMARTSPLIT       = CConfigValue<Config::INTEGER>("dwindle:smart_split");
-        static auto PPRESERVESPLIT    = CConfigValue<Config::INTEGER>("dwindle:preserve_split");
+        static auto PSMARTSPLIT       = CConfigValue<Config::BOOL>("dwindle:smart_split");
+        static auto PPRESERVESPLIT    = CConfigValue<Config::BOOL>("dwindle:preserve_split");
         static auto PFLMULT           = CConfigValue<Config::FLOAT>("dwindle:split_width_multiplier");
-        static auto PPRECISEMOUSEMOVE = CConfigValue<Config::INTEGER>("dwindle:precise_mouse_move");
+        static auto PPRECISEMOUSEMOVE = CConfigValue<Config::BOOL>("dwindle:precise_mouse_move");
 
-        if (*PPRESERVESPLIT == 0 && *PSMARTSPLIT == 0 && *PPRECISEMOUSEMOVE == 0)
+        if (!(*PPRESERVESPLIT) && !(*PSMARTSPLIT) && !(*PPRECISEMOUSEMOVE))
             splitTop = box.h * *PFLMULT > box.w;
 
         if (verticalOverride)
@@ -71,7 +73,7 @@ void CDwindleAlgorithm::addTarget(SP<ITarget> target) {
     const auto  PMONITOR   = m_parent->space()->workspace()->m_monitor;
     const auto  PWORKSPACE = m_parent->space()->workspace();
 
-    static auto PUSEACTIVE    = CConfigValue<Config::INTEGER>("dwindle:use_active_for_splits");
+    static auto PUSEACTIVE    = CConfigValue<Config::BOOL>("dwindle:use_active_for_splits");
     static auto PDEFAULTSPLIT = CConfigValue<Config::FLOAT>("dwindle:default_split_ratio");
 
     // Populate the node with our window's data
@@ -83,7 +85,7 @@ void CDwindleAlgorithm::addTarget(SP<ITarget> target) {
     const auto           MOUSECOORDS = m_overrideFocalPoint.value_or(g_pInputManager->getMouseCoordsInternal());
     const auto           ACTIVE_MON  = Desktop::focusState()->monitor();
 
-    if ((PWORKSPACE == ACTIVE_MON->m_activeWorkspace || (PWORKSPACE->m_isSpecialWorkspace && PMONITOR->m_activeSpecialWorkspace)) && !*PUSEACTIVE) {
+    if ((PWORKSPACE == ACTIVE_MON->m_activeWorkspace || (PWORKSPACE->type() == Workspace::eWorkspaceType::SPECIAL && PMONITOR->m_activeSpecialWorkspace)) && !*PUSEACTIVE) {
         OPENINGON = getNodeFromWindow(
             Desktop::viewState()->hitTest().windowAt(MOUSECOORDS, Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS | Desktop::View::SKIP_FULLSCREEN_PRIORITY));
 
@@ -95,8 +97,8 @@ void CDwindleAlgorithm::addTarget(SP<ITarget> target) {
 
         if (m_overrideFocalPoint)
             OPENINGON = getClosestNode(*m_overrideFocalPoint);
-        else if (!m_overrideFocalPoint && ACTIVE_WINDOW && !ACTIVE_WINDOW->m_isFloating && ACTIVE_WINDOW != target->window() && ACTIVE_WINDOW->m_workspace == PWORKSPACE &&
-                 ACTIVE_WINDOW->m_isMapped)
+        else if (!m_overrideFocalPoint && ACTIVE_WINDOW && !ACTIVE_WINDOW->isFloating() && ACTIVE_WINDOW != target->window() && ACTIVE_WINDOW->m_workspace == PWORKSPACE &&
+                 ACTIVE_WINDOW->mapped())
             OPENINGON = getNodeFromWindow(ACTIVE_WINDOW);
 
         if (!OPENINGON)
@@ -148,10 +150,10 @@ void CDwindleAlgorithm::addTarget(SP<ITarget> target) {
     NEWPARENT->splitTop   = !SIDEBYSIDE;
 
     static auto PFORCESPLIT                = CConfigValue<Config::INTEGER>("dwindle:force_split");
-    static auto PERMANENTDIRECTIONOVERRIDE = CConfigValue<Config::INTEGER>("dwindle:permanent_direction_override");
-    static auto PSMARTSPLIT                = CConfigValue<Config::INTEGER>("dwindle:smart_split");
+    static auto PERMANENTDIRECTIONOVERRIDE = CConfigValue<Config::BOOL>("dwindle:permanent_direction_override");
+    static auto PSMARTSPLIT                = CConfigValue<Config::BOOL>("dwindle:smart_split");
     static auto PSPLITBIAS                 = CConfigValue<Config::INTEGER>("dwindle:split_bias");
-    static auto PPRECISEMOUSEMOVE          = CConfigValue<Config::INTEGER>("dwindle:precise_mouse_move");
+    static auto PPRECISEMOUSEMOVE          = CConfigValue<Config::BOOL>("dwindle:precise_mouse_move");
 
     bool        horizontalOverride = false;
     bool        verticalOverride   = false;
@@ -270,7 +272,7 @@ void CDwindleAlgorithm::removeTarget(SP<ITarget> target) {
     const auto PNODE = getNodeFromTarget(target);
 
     if (!PNODE) {
-        Log::logger->log(Log::ERR, "onWindowRemovedTiling node null?");
+        LOG(Log::ERR, "onWindowRemovedTiling node null?");
         return;
     }
 
@@ -282,7 +284,7 @@ void CDwindleAlgorithm::removeTarget(SP<ITarget> target) {
     const auto PPARENT = PNODE->pParent;
 
     if (!PPARENT) {
-        Log::logger->log(Log::DEBUG, "Removing last node (dwindle)");
+        LOG(Log::DEBUG, "Removing last node (dwindle)");
         std::erase(m_dwindleNodesData, PNODE);
         return;
     }
@@ -316,8 +318,8 @@ void CDwindleAlgorithm::resizeTarget(const Vector2D& Δ, SP<ITarget> target, eRe
     if (!PNODE)
         return;
 
-    static auto PANIMATE       = CConfigValue<Config::INTEGER>("misc:animate_manual_resizes");
-    static auto PSMARTRESIZING = CConfigValue<Config::INTEGER>("dwindle:smart_resizing");
+    static auto PANIMATE       = CConfigValue<Config::BOOL>("misc:animate_manual_resizes");
+    static auto PSMARTRESIZING = CConfigValue<Config::BOOL>("dwindle:smart_resizing");
 
     // get some data about our window
     const auto PMONITOR         = m_parent->space()->workspace()->m_monitor;
@@ -554,7 +556,7 @@ std::optional<Vector2D> CDwindleAlgorithm::predictSizeForNewTarget() {
 }
 
 void CDwindleAlgorithm::moveTargetInDirection(SP<ITarget> t, Math::eDirection dir, bool silent) {
-    static auto    PMONITORFALLBACK = CConfigValue<Config::INTEGER>("binds:window_direction_monitor_fallback");
+    static auto    PMONITORFALLBACK = CConfigValue<Config::BOOL>("binds:window_direction_monitor_fallback");
 
     const auto     PNODE       = getNodeFromTarget(t);
     const Vector2D originalPos = t->position().middle();
@@ -585,13 +587,13 @@ void CDwindleAlgorithm::moveTargetInDirection(SP<ITarget> t, Math::eDirection di
         }
     }
 
-    t->window()->setAnimationsToMove();
+    t->window()->presentation().setAnimationsToMove();
 
     if (PMONITORFOCAL != m_parent->space()->workspace()->m_monitor) {
         // move with a focal point
 
         if (PMONITORFOCAL->m_activeWorkspace)
-            t->assignToSpace(PMONITORFOCAL->m_activeWorkspace->m_space, FOCAL_POINT);
+            t->assignToSpace(PMONITORFOCAL->m_activeWorkspace->space(), FOCAL_POINT);
 
         return;
     }
@@ -693,7 +695,7 @@ Config::ErrorResult CDwindleAlgorithm::layoutMsg(const std::string_view& sv) {
                 try {
                     angle = std::stoi(std::string{ARGS[1]});
                 } catch (const std::exception& e) {
-                    Log::logger->log(Log::WARN, "Invalid angle argument for rotatesplit: {}", ARGS[1]);
+                    LOG(Log::WARN, "Invalid angle argument for rotatesplit: {}", ARGS[1]);
                     return Config::configError("Invalid angle argument", Config::eConfigErrorLevel::ERROR, Config::eConfigErrorCode::INVALID_ARGUMENT);
                 }
             }
@@ -714,7 +716,7 @@ Config::ErrorResult CDwindleAlgorithm::layoutMsg(const std::string_view& sv) {
         auto direction = ARGS[1];
 
         if (direction.empty()) {
-            Log::logger->log(Log::ERR, "Expected direction for preselect");
+            LOG(Log::ERR, "Expected direction for preselect");
             return Config::configError("No direction for preselect", Config::eConfigErrorLevel::ERROR, Config::eConfigErrorCode::INVALID_ARGUMENT);
         }
 

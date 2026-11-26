@@ -1,17 +1,19 @@
 #include "FocusState.hpp"
-#include "../view/Window.hpp"
+#include "../view/window/WindowFullscreenPolicy.hpp"
+#include "../view/window/WindowGroupMembership.hpp"
+#include "../view/window/Window.hpp"
+#include "../view/window/WindowPresentation.hpp"
 #include "../../Compositor.hpp"
-#include "../../protocols/XDGShell.hpp"
 #include "../../render/Renderer.hpp"
-#include "../../managers/EventManager.hpp"
+#include "../../ipc/s2/S2.hpp"
 #include "../../managers/input/InputManager.hpp"
 #include "../../managers/SeatManager.hpp"
-#include "../../xwayland/XSurface.hpp"
-#include "../../protocols/PointerConstraints.hpp"
 #include "animation/WorkspaceAnimationController.hpp"
 #include "../../managers/fullscreen/FullscreenController.hpp"
 #include "../../layout/LayoutManager.hpp"
+#include "../../layout/target/WindowTarget.hpp"
 #include "../../event/EventBus.hpp"
+#include "../../workspace/query/Query.hpp"
 
 using namespace Desktop;
 
@@ -36,9 +38,9 @@ static SFullscreenWorkspaceFocusResult onFullscreenWorkspaceFocusWindow(PHLWINDO
     if (pWindow == FSWINDOW)
         return {}; // no conflict
 
-    if (pWindow->m_isFloating) {
+    if (pWindow->isFloating()) {
         // if the window is floating, just bring it to the top
-        pWindow->m_allowedOverFullscreen = true;
+        pWindow->fullscreenPolicy().setAllowedOverFullscreen(true);
         pWindow->updateFullscreenInputState();
         Animation::Workspace::setFullscreenFloatingFade(pWindow, 1.F);
         g_pHyprRenderer->damageWindow(pWindow);
@@ -64,7 +66,7 @@ static SFullscreenWorkspaceFocusResult onFullscreenWorkspaceFocusWindow(PHLWINDO
             Fullscreen::controller()->setFullscreenMode(pWindow, FSMODE_INTERNAL, std::nullopt, LAYOUT_HANDLED);
             break;
 
-        default: Log::logger->log(Log::ERR, "Invalid misc:on_focus_under_fullscreen mode: {}", *PONFOCUSUNDERFS); break;
+        default: LOG(Log::ERR, "Invalid misc:on_focus_under_fullscreen mode: {}", *PONFOCUSUNDERFS); break;
     }
 
     return {};
@@ -83,10 +85,10 @@ void CFocusState::fullWindowFocus(PHLWINDOW pWindow, eFocusReason reason, SP<CWL
         }
     }
 
-    static auto PMODALPARENTBLOCKING = CConfigValue<Config::INTEGER>("general:modal_parent_blocking");
+    static auto PMODALPARENTBLOCKING = CConfigValue<Config::BOOL>("general:modal_parent_blocking");
 
-    if (*PMODALPARENTBLOCKING && pWindow && pWindow->m_xdgSurface && pWindow->m_xdgSurface->m_toplevel && pWindow->m_xdgSurface->m_toplevel->anyChildModal()) {
-        Log::logger->log(Log::DEBUG, "Refusing focus to window shadowed by modal dialog");
+    if (*PMODALPARENTBLOCKING && pWindow && !pWindow->backend().isX11() && pWindow->backend().traits().hasModalChild) {
+        LOG(Log::DEBUG, "Refusing focus to window shadowed by modal dialog");
         return;
     }
 
@@ -95,29 +97,34 @@ void CFocusState::fullWindowFocus(PHLWINDOW pWindow, eFocusReason reason, SP<CWL
 
 void CFocusState::rawWindowFocus(PHLWINDOW pWindow, eFocusReason reason, SP<CWLSurfaceResource> surface) {
     static auto PFOLLOWMOUSE        = CConfigValue<Config::INTEGER>("input:follow_mouse");
-    static auto PSPECIALFALLTHROUGH = CConfigValue<Config::INTEGER>("input:special_fallthrough");
+    static auto PSPECIALFALLTHROUGH = CConfigValue<Config::BOOL>("input:special_fallthrough");
 
     if (pWindow == m_focusWindow && surface == m_focusSurface && m_focusSurface)
         return;
 
     if (!pWindow || !pWindow->priorityFocus()) {
         if (g_pSessionLockManager->isSessionLocked()) {
-            Log::logger->log(Log::DEBUG, "Refusing a keyboard focus to a window because of a sessionlock");
+            LOG(Log::DEBUG, "Refusing a keyboard focus to a window because of a sessionlock");
             return;
         }
 
-        if (!g_pInputManager->m_exclusiveLSes.empty()) {
-            Log::logger->log(Log::DEBUG, "Refusing a keyboard focus to a window because of an exclusive ls");
+        if (!g_pInputManager->m_exclusiveKeyboardLSes.empty()) {
+            LOG(Log::DEBUG, "Refusing a keyboard focus to a window because of an exclusive ls");
             return;
         }
     }
 
-    if (pWindow && pWindow->m_isX11 && pWindow->isX11OverrideRedirect() && !pWindow->m_xwaylandSurface->wantsFocus())
-        return;
+    if (pWindow && pWindow->backend().isX11()) {
+        const auto TRAITS = pWindow->backend().traits();
+        if (TRAITS.overrideRedirect && !TRAITS.wantsFocus)
+            return;
+    }
 
     // m_target on purpose, this avoids the group
     if (pWindow)
-        g_layoutManager->bringTargetToTop(pWindow->m_target);
+        g_layoutManager->bringTargetToTop(pWindow->windowTarget());
+
+    auto constraintGuard = g_pInputManager->pointerConstraints().suspend();
 
     if (!pWindow || !validMapped(pWindow)) {
 
@@ -127,17 +134,17 @@ void CFocusState::rawWindowFocus(PHLWINDOW pWindow, eFocusReason reason, SP<CWLS
         const auto PLASTWINDOW = m_focusWindow.lock();
         m_focusWindow.reset();
 
-        if (PLASTWINDOW && PLASTWINDOW->m_isMapped) {
+        if (PLASTWINDOW && PLASTWINDOW->mapped()) {
             PLASTWINDOW->m_ruleApplicator->propertiesChanged(Rule::RULE_PROP_FOCUS);
-            PLASTWINDOW->updateDecorationValues();
+            PLASTWINDOW->presentation().refreshValues();
 
             g_pXWaylandManager->activateWindow(PLASTWINDOW, false);
         }
 
         g_pSeatManager->setKeyboardFocus(nullptr);
 
-        g_pEventManager->postEvent(SHyprIPCEvent{"activewindow", ","});
-        g_pEventManager->postEvent(SHyprIPCEvent{"activewindowv2", ""});
+        IPC::Socket2::sock()->postEvent({"activewindow", ","});
+        IPC::Socket2::sock()->postEvent({"activewindowv2", ""});
 
         Event::bus()->m_events.window.active.emit(nullptr, reason);
 
@@ -148,23 +155,23 @@ void CFocusState::rawWindowFocus(PHLWINDOW pWindow, eFocusReason reason, SP<CWLS
     }
 
     if (pWindow->m_ruleApplicator->noFocus().valueOrDefault()) {
-        Log::logger->log(Log::DEBUG, "Ignoring focus to nofocus window!");
+        LOG(Log::DEBUG, "Ignoring focus to nofocus window!");
         return;
     }
 
     if (m_focusWindow.lock() == pWindow && g_pSeatManager->m_state.keyboardFocus == surface && g_pSeatManager->m_state.keyboardFocus)
         return;
 
-    if (pWindow->m_pinned)
+    if (pWindow->m_state & Desktop::View::WINDOW_STATE_PINNED)
         pWindow->m_workspace = m_focusMonitor->m_activeWorkspace;
 
     const auto PMONITOR = pWindow->m_monitor.lock();
 
-    if (!pWindow->m_workspace || !pWindow->m_workspace->isVisible()) {
+    if (!pWindow->m_workspace || !pWindow->m_workspace->visible()) {
         const auto PWORKSPACE = pWindow->m_workspace;
         // This is to fix incorrect feedback on the focus history.
-        PWORKSPACE->m_lastFocusedWindow = pWindow;
-        if (PWORKSPACE->m_isSpecialWorkspace)
+        PWORKSPACE->rememberFocusedWindow(pWindow);
+        if (PWORKSPACE->type() == Workspace::eWorkspaceType::SPECIAL)
             m_focusMonitor->changeWorkspace(PWORKSPACE, false, true); // if special ws, open on current monitor
         else if (PMONITOR)
             PMONITOR->changeWorkspace(PWORKSPACE, false, true);
@@ -172,24 +179,25 @@ void CFocusState::rawWindowFocus(PHLWINDOW pWindow, eFocusReason reason, SP<CWLS
         return;
     }
 
-    if (PMONITOR && !pWindow->m_pinned)
+    if (PMONITOR && !(pWindow->m_state & Desktop::View::WINDOW_STATE_PINNED))
         rawMonitorFocus(PMONITOR);
 
-    const auto PLASTWINDOW                    = m_focusWindow.lock();
-    m_focusWindow                             = pWindow;
-    pWindow->m_workspace->m_lastFocusedWindow = pWindow;
+    const auto PLASTWINDOW = m_focusWindow.lock();
+    m_focusWindow          = pWindow;
+    pWindow->m_workspace->rememberFocusedWindow(pWindow);
 
     /* If special fallthrough is enabled, this behavior will be disabled, as I have no better idea of nicely tracking which
        window focuses are "via keybinds" and which ones aren't. */
-    if (PMONITOR && PMONITOR->m_activeSpecialWorkspace && PMONITOR->m_activeSpecialWorkspace != pWindow->m_workspace && !pWindow->m_pinned && !*PSPECIALFALLTHROUGH)
+    if (PMONITOR && PMONITOR->m_activeSpecialWorkspace && PMONITOR->m_activeSpecialWorkspace != pWindow->m_workspace && !(pWindow->m_state & Desktop::View::WINDOW_STATE_PINNED) &&
+        !*PSPECIALFALLTHROUGH)
         PMONITOR->setSpecialWorkspace(nullptr);
 
     // we need to make the PLASTWINDOW not equal to m_pLastWindow so that RENDERDATA is correct for an unfocused window
-    if (PLASTWINDOW && PLASTWINDOW->m_isMapped) {
+    if (PLASTWINDOW && PLASTWINDOW->mapped()) {
         PLASTWINDOW->m_ruleApplicator->propertiesChanged(Rule::RULE_PROP_FOCUS);
-        PLASTWINDOW->updateDecorationValues();
+        PLASTWINDOW->presentation().refreshValues();
 
-        if (!pWindow->m_isX11 || !pWindow->isX11OverrideRedirect())
+        if (!pWindow->backend().isX11() || !pWindow->backend().traits().overrideRedirect)
             g_pXWaylandManager->activateWindow(PLASTWINDOW, false);
     }
 
@@ -199,15 +207,15 @@ void CFocusState::rawWindowFocus(PHLWINDOW pWindow, eFocusReason reason, SP<CWLS
     g_pXWaylandManager->activateWindow(pWindow, true); // sets the m_pLastWindow
 
     pWindow->m_ruleApplicator->propertiesChanged(Rule::RULE_PROP_FOCUS);
-    pWindow->onFocusAnimUpdate();
-    pWindow->updateDecorationValues();
+    pWindow->presentation().onFocusAnimUpdate();
+    pWindow->presentation().refreshValues();
 
-    if (pWindow->m_isUrgent)
-        pWindow->m_isUrgent = false;
+    if (pWindow->m_hints & Desktop::View::WINDOW_HINT_URGENT)
+        pWindow->m_hints &= ~Desktop::View::WINDOW_HINT_URGENT;
 
     // Send an event
-    g_pEventManager->postEvent(SHyprIPCEvent{.event = "activewindow", .data = pWindow->m_class + "," + pWindow->m_title});
-    g_pEventManager->postEvent(SHyprIPCEvent{.event = "activewindowv2", .data = std::format("{:x}", rc<uintptr_t>(pWindow.get()))});
+    IPC::Socket2::sock()->postEvent({.event = "activewindow", .data = std::format("{},{}", pWindow->metadata().appID(), pWindow->metadata().title())});
+    IPC::Socket2::sock()->postEvent({.event = "activewindowv2", .data = std::format("{:x}", rc<uintptr_t>(pWindow.get()))});
 
     Event::bus()->m_events.window.active.emit(pWindow, reason);
 
@@ -216,7 +224,7 @@ void CFocusState::rawWindowFocus(PHLWINDOW pWindow, eFocusReason reason, SP<CWLS
     if (*PFOLLOWMOUSE == 0)
         g_pInputManager->sendMotionEventsToFocused();
 
-    if (pWindow->m_group)
+    if (pWindow->grouping().group())
         pWindow->deactivateGroupMembers();
 }
 
@@ -228,11 +236,11 @@ void CFocusState::rawSurfaceFocus(SP<CWLSurfaceResource> pSurface, PHLWINDOW pWi
         return;
 
     if (g_pSeatManager->m_seatGrab && !g_pSeatManager->m_seatGrab->accepts(pSurface)) {
-        Log::logger->log(Log::DEBUG, "surface {:x} won't receive kb focus because grab rejected it", rc<uintptr_t>(pSurface.get()));
+        LOG(Log::DEBUG, "surface {:x} won't receive kb focus because grab rejected it", rc<uintptr_t>(pSurface.get()));
         return;
     }
 
-    const auto PLASTSURF = m_focusSurface.lock();
+    auto constraintGuard = g_pInputManager->pointerConstraints().suspend();
 
     // Unfocus last surface if should
     if (m_focusSurface && !pWindowOwner)
@@ -240,8 +248,8 @@ void CFocusState::rawSurfaceFocus(SP<CWLSurfaceResource> pSurface, PHLWINDOW pWi
 
     if (!pSurface) {
         g_pSeatManager->setKeyboardFocus(nullptr);
-        g_pEventManager->postEvent(SHyprIPCEvent{.event = "activewindow", .data = ","});
-        g_pEventManager->postEvent(SHyprIPCEvent{.event = "activewindowv2", .data = ""});
+        IPC::Socket2::sock()->postEvent({.event = "activewindow", .data = ","});
+        IPC::Socket2::sock()->postEvent({.event = "activewindowv2", .data = ""});
         Event::bus()->m_events.input.keyboard.focus.emit(nullptr);
         m_focusSurface.reset();
         return;
@@ -251,23 +259,14 @@ void CFocusState::rawSurfaceFocus(SP<CWLSurfaceResource> pSurface, PHLWINDOW pWi
         g_pSeatManager->setKeyboardFocus(pSurface);
 
     if (pWindowOwner)
-        Log::logger->log(Log::DEBUG, "Set keyboard focus to surface {:x}, with {}", rc<uintptr_t>(pSurface.get()), pWindowOwner);
+        LOG(Log::DEBUG, "Set keyboard focus to surface {:x}, with {}", rc<uintptr_t>(pSurface.get()), pWindowOwner);
     else
-        Log::logger->log(Log::DEBUG, "Set keyboard focus to surface {:x}", rc<uintptr_t>(pSurface.get()));
+        LOG(Log::DEBUG, "Set keyboard focus to surface {:x}", rc<uintptr_t>(pSurface.get()));
 
     g_pXWaylandManager->activateSurface(pSurface, true);
     m_focusSurface = pSurface;
 
     Event::bus()->m_events.input.keyboard.focus.emit(pSurface);
-
-    const auto SURF    = Desktop::View::CWLSurface::fromResource(pSurface);
-    const auto OLDSURF = Desktop::View::CWLSurface::fromResource(PLASTSURF);
-
-    if (OLDSURF && OLDSURF->constraint())
-        OLDSURF->constraint()->deactivate();
-
-    if (SURF && SURF->constraint())
-        SURF->constraint()->activate();
 }
 
 void CFocusState::rawMonitorFocus(PHLMONITOR pMonitor) {
@@ -281,11 +280,11 @@ void CFocusState::rawMonitorFocus(PHLMONITOR pMonitor) {
 
     const auto PWORKSPACE = pMonitor->m_activeWorkspace;
 
-    const auto WORKSPACE_ID   = PWORKSPACE ? std::to_string(PWORKSPACE->m_id) : std::to_string(WORKSPACE_INVALID);
-    const auto WORKSPACE_NAME = PWORKSPACE ? PWORKSPACE->m_name : "?";
+    const auto WORKSPACE_ADDRESS = PWORKSPACE ? PWORKSPACE->addressableName() : "";
+    const auto WORKSPACE_NAME    = PWORKSPACE ? PWORKSPACE->addressableName() : "?";
 
-    g_pEventManager->postEvent(SHyprIPCEvent{.event = "focusedmon", .data = pMonitor->m_name + "," + WORKSPACE_NAME});
-    g_pEventManager->postEvent(SHyprIPCEvent{.event = "focusedmonv2", .data = pMonitor->m_name + "," + WORKSPACE_ID});
+    IPC::Socket2::sock()->postEvent({.event = "focusedmon", .data = std::format("{},{}", pMonitor->m_name, WORKSPACE_NAME)});
+    IPC::Socket2::sock()->postEvent({.event = "focusedmonv2", .data = std::format("{},{}", pMonitor->m_name, WORKSPACE_ADDRESS)});
 
     Event::bus()->m_events.monitor.focused.emit(pMonitor);
     m_focusMonitor = pMonitor;
@@ -315,7 +314,7 @@ bool CFocusState::isWindowActive(PHLWINDOW pWindow) const {
     if (!FOCUSWINDOW && !FOCUSSURFACE)
         return false;
 
-    if (!pWindow || !pWindow->m_isMapped)
+    if (!pWindow || !pWindow->mapped())
         return false;
 
     const auto PSURFACE = pWindow->wlSurface()->resource();
@@ -324,6 +323,9 @@ bool CFocusState::isWindowActive(PHLWINDOW pWindow) const {
 }
 
 bool Desktop::isHardInputFocusReason(eFocusReason r) {
-    return r == FOCUS_REASON_NEW_WINDOW || r == FOCUS_REASON_KEYBIND || r == FOCUS_REASON_GHOSTS || r == FOCUS_REASON_CLICK || r == FOCUS_REASON_DESKTOP_STATE_CHANGE ||
-        r == FOCUS_REASON_UNMAP_WINDOW_TILING || r == FOCUS_REASON_SWITCH_TO_WINDOW_HARD;
+
+    static const auto PFOLLOW_FOCUS = CConfigValue<Config::INTEGER>("scrolling:follow_focus");
+
+    return r == FOCUS_REASON_NEW_WINDOW || r == FOCUS_REASON_KEYBIND || r == FOCUS_REASON_GHOSTS || ((*PFOLLOW_FOCUS == 1) ? (r == FOCUS_REASON_CLICK_UP) : false) ||
+        r == FOCUS_REASON_DESKTOP_STATE_CHANGE || r == FOCUS_REASON_UNMAP_WINDOW_TILING || r == FOCUS_REASON_SWITCH_TO_WINDOW_HARD;
 }

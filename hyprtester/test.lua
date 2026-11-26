@@ -131,7 +131,7 @@ hl.config({
         fullscreen_on_one_column = true,
         column_width = 0.5,
         focus_fit_method = 1,
-        follow_focus = true,
+        follow_focus = 1,
         follow_min_visible = 1,
         explicit_column_widths = "0.25, 0.333, 0.5, 0.667, 0.75, 1.0",
         wrap_focus = true,
@@ -143,6 +143,7 @@ hl.config({
     misc = {
         force_default_wallpaper = -1,
         disable_hyprland_logo = false,
+        transaction_timeout = 0,
     },
 })
 
@@ -234,12 +235,6 @@ end)
 hl.define_submap("submap3", "reset", function()
     hl.bind("o", hl.dsp.exec_cmd(terminal))
 end)
-
-hl.window_rule({
-    name = "suppress-maximize-events",
-    match = { class = ".*" },
-    suppress_event = "maximize",
-})
 
 hl.window_rule({
     name = "fix-xwayland-drags",

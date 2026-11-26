@@ -5,6 +5,7 @@
 #include "../helpers/math/Math.hpp"
 
 AQUAMARINE_FORWARD(IPointer);
+AQUAMARINE_FORWARD(IOutput);
 
 /*
     Base class for a pointer.
@@ -13,8 +14,8 @@ class IPointer : public IHID {
   public:
     virtual uint32_t                 getCapabilities();
     virtual eHIDType                 getType();
-    virtual bool                     isVirtual() = 0;
-    virtual SP<Aquamarine::IPointer> aq()        = 0;
+    virtual bool                     isVirtual() const = 0;
+    virtual SP<Aquamarine::IPointer> aq()              = 0;
 
     struct SMotionEvent {
         uint32_t     timeMs = 0;
@@ -24,9 +25,11 @@ class IPointer : public IHID {
     };
 
     struct SMotionAbsoluteEvent {
-        uint32_t timeMs = 0;
-        Vector2D absolute; // 0.0 - 1.0
-        SP<IHID> device;
+        uint32_t                timeMs = 0;
+        Vector2D                absolute; // 0.0 - 1.0
+        SP<IHID>                device;
+        WP<Aquamarine::IOutput> output;
+        bool                    mouse = false;
     };
 
     struct SButtonEvent {
@@ -116,4 +119,7 @@ class IPointer : public IHID {
     std::optional<float> m_scrollFactor = {};
 
     WP<IPointer>         m_self;
+
+  protected:
+    using IHID::IHID;
 };

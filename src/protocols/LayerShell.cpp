@@ -7,13 +7,13 @@
 #include "../output/Monitor.hpp"
 
 void CLayerShellResource::SState::reset() {
-    anchor        = 0;
-    exclusive     = 0;
-    interactivity = ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE;
-    layer         = ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM;
-    exclusiveEdge = sc<zwlrLayerSurfaceV1Anchor>(0);
-    desiredSize   = {};
-    margin        = {0, 0, 0, 0};
+    anchor                = 0;
+    exclusive             = 0;
+    keyboardInteractivity = ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE;
+    layer                 = ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM;
+    exclusiveEdge         = sc<zwlrLayerSurfaceV1Anchor>(0);
+    desiredSize           = {};
+    margin                = {0, 0, 0, 0};
 }
 
 CLayerShellResource::CLayerShellResource(SP<CZwlrLayerSurfaceV1> resource_, SP<CWLSurfaceResource> surf_, std::string namespace_, PHLMONITOR pMonitor,
@@ -83,7 +83,7 @@ CLayerShellResource::CLayerShellResource(SP<CZwlrLayerSurfaceV1> resource_, SP<C
     });
 
     m_resource->setSetSize([this](CZwlrLayerSurfaceV1* r, uint32_t x, uint32_t y) {
-        m_pending.committed |= STATE_SIZE;
+        markPending(STATE_SIZE);
         m_pending.desiredSize = {sc<int>(x), sc<int>(y)};
     });
 
@@ -93,17 +93,17 @@ CLayerShellResource::CLayerShellResource(SP<CZwlrLayerSurfaceV1> resource_, SP<C
             return;
         }
 
-        m_pending.committed |= STATE_ANCHOR;
+        markPending(STATE_ANCHOR);
         m_pending.anchor = anchor;
     });
 
     m_resource->setSetExclusiveZone([this](CZwlrLayerSurfaceV1* r, int32_t zone) {
-        m_pending.committed |= STATE_EXCLUSIVE;
+        markPending(STATE_EXCLUSIVE);
         m_pending.exclusive = zone;
     });
 
     m_resource->setSetMargin([this](CZwlrLayerSurfaceV1* r, int32_t top, int32_t right, int32_t bottom, int32_t left) {
-        m_pending.committed |= STATE_MARGIN;
+        markPending(STATE_MARGIN);
         m_pending.margin = {left, right, top, bottom};
     });
 
@@ -113,8 +113,8 @@ CLayerShellResource::CLayerShellResource(SP<CZwlrLayerSurfaceV1> resource_, SP<C
             return;
         }
 
-        m_pending.committed |= STATE_INTERACTIVITY;
-        m_pending.interactivity = kbi;
+        markPending(STATE_KEYBOARD_INTERACTIVITY);
+        m_pending.keyboardInteractivity = kbi;
     });
 
     m_resource->setGetPopup([this](CZwlrLayerSurfaceV1* r, wl_resource* popup_) {
@@ -149,7 +149,7 @@ CLayerShellResource::CLayerShellResource(SP<CZwlrLayerSurfaceV1> resource_, SP<C
             return;
         }
 
-        m_pending.committed |= STATE_LAYER;
+        markPending(STATE_LAYER);
         m_pending.layer = sc<zwlrLayerShellV1Layer>(layer);
     });
 
@@ -164,7 +164,7 @@ CLayerShellResource::CLayerShellResource(SP<CZwlrLayerSurfaceV1> resource_, SP<C
             return;
         }
 
-        m_pending.committed |= STATE_EDGE;
+        markPending(STATE_EDGE);
         m_pending.exclusiveEdge = anchor;
     });
 }
@@ -177,6 +177,12 @@ CLayerShellResource::~CLayerShellResource() {
 
 bool CLayerShellResource::good() {
     return m_resource->resource();
+}
+
+void CLayerShellResource::markPending(eCommittedState state) {
+    m_pending.committed |= state;
+    if (m_surface)
+        m_surface->m_pending.updated.bits.layershell = true;
 }
 
 void CLayerShellResource::sendClosed() {
@@ -269,7 +275,7 @@ void CLayerShellProtocol::onGetLayerSurface(CZwlrLayerShellV1* pMgr, uint32_t id
         }
     }
 
-    LOGM(Log::DEBUG, "New wlr_layer_surface {:x}", (uintptr_t)RESOURCE.get());
+    LOG(Log::DEBUG, "New wlr_layer_surface {:x}", (uintptr_t)RESOURCE.get());
 }
 
 CLayerShellRole::CLayerShellRole(SP<CLayerShellResource> ls) : m_layerSurface(ls) {

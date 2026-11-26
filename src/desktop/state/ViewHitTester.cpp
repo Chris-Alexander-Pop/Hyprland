@@ -3,17 +3,17 @@
 #include "ViewStateTracker.hpp"
 #include "../view/LayerSurface.hpp"
 #include "../view/WLSurface.hpp"
-#include "../view/Window.hpp"
+#include "../view/window/Window.hpp"
 #include "../../config/ConfigValue.hpp"
 #include "../../layout/space/Space.hpp"
 #include "../../macros.hpp"
 #include "../../protocols/LayerShell.hpp"
-#include "../../protocols/XDGShell.hpp"
 #include "../../protocols/core/Compositor.hpp"
 #include "../../state/MonitorState.hpp"
 #include "../../state/WorkspaceState.hpp"
-#include "../../xwayland/XWayland.hpp"
 #include "../../managers/fullscreen/FullscreenController.hpp"
+#include "../../workspace/HLWorkspace.hpp"
+#include "workspace/AbstractWorkspace.hpp"
 
 #include <cmath>
 #include <ranges>
@@ -27,15 +27,23 @@ CViewHitTester::CViewHitTester(const IViewStateTracker& tracker) : m_tracker(tra
 }
 
 PHLWINDOW CViewHitTester::windowAt(const Vector2D& pos, uint16_t properties, PHLWINDOW ignoreWindow) const {
-    const auto PMONITOR = State::monitorState()->query().vec(pos).run();
+    return windowAtInternal(pos, properties, ignoreWindow, nullptr);
+}
+
+PHLWINDOW CViewHitTester::windowAtWorkspace(const Vector2D& pos, PHLWORKSPACE workspace, uint16_t properties, PHLWINDOW ignoreWindow) const {
+    return windowAtInternal(pos, properties, ignoreWindow, workspace);
+}
+
+PHLWINDOW CViewHitTester::windowAtInternal(const Vector2D& pos, uint16_t properties, PHLWINDOW ignoreWindow, PHLWORKSPACE workspace) const {
+    const auto PMONITOR = workspace ? workspace->m_monitor.lock() : State::monitorState()->query().vec(pos).run();
     if (!PMONITOR)
         return nullptr;
 
-    static auto PRESIZEONBORDER       = CConfigValue<Config::INTEGER>("general:resize_on_border");
+    static auto PRESIZEONBORDER       = CConfigValue<Config::BOOL>("general:resize_on_border");
     static auto PBORDERSIZE           = CConfigValue<Config::INTEGER>("general:border_size");
     static auto PBORDERGRABEXTEND     = CConfigValue<Config::INTEGER>("general:extend_border_grab_area");
-    static auto PSPECIALFALLTHRU      = CConfigValue<Config::INTEGER>("input:special_fallthrough");
-    static auto PMODALPARENTBLOCKING  = CConfigValue<Config::INTEGER>("general:modal_parent_blocking");
+    static auto PSPECIALFALLTHRU      = CConfigValue<Config::BOOL>("input:special_fallthrough");
+    static auto PMODALPARENTBLOCKING  = CConfigValue<Config::BOOL>("general:modal_parent_blocking");
     static auto PFOLLOWMOUSESHRINK    = CConfigValue<Config::INTEGER>("input:follow_mouse_shrink");
     const auto  BORDER_GRAB_AREA      = *PRESIZEONBORDER ? *PBORDERSIZE + *PBORDERGRABEXTEND : 0;
     const bool  ONLY_PRIORITY         = properties & FOCUS_PRIORITY;
@@ -44,9 +52,7 @@ PHLWINDOW CViewHitTester::windowAt(const Vector2D& pos, uint16_t properties, PHL
     const auto  LASTFOCUSED           = focusState()->window();
     const auto& WINDOWS               = m_tracker.windows();
 
-    const auto  isShadowedByModal = [](PHLWINDOW w) -> bool {
-        return *PMODALPARENTBLOCKING && w->m_xdgSurface && w->m_xdgSurface->m_toplevel && w->m_xdgSurface->m_toplevel->anyChildModal();
-    };
+    const auto  isShadowedByModal = [](PHLWINDOW w) -> bool { return *PMODALPARENTBLOCKING && !w->backend().isX11() && w->backend().traits().hasModalChild; };
 
     // pinned windows on top of floating regardless
     if (properties & ALLOW_FLOATING) {
@@ -54,16 +60,16 @@ PHLWINDOW CViewHitTester::windowAt(const Vector2D& pos, uint16_t properties, PHL
             if (ONLY_PRIORITY && !w->priorityFocus())
                 continue;
 
-            if (w->m_isFloating && w->m_isMapped && w->acceptsInput() && !w->m_X11ShouldntFocus && w->m_pinned && !w->m_ruleApplicator->noFocus().valueOrDefault() &&
-                w != ignoreWindow && !isShadowedByModal(w)) {
+            if (w->isFloating() && w->mapped() && w->acceptsInput() && !w->shouldntFocus() && (w->m_state & WINDOW_STATE_PINNED) &&
+                !w->m_ruleApplicator->noFocus().valueOrDefault() && w != ignoreWindow && !isShadowedByModal(w)) {
                 const auto BB  = w->getWindowBoxUnified(properties);
-                CBox       box = BB.copy().expand(!w->isX11OverrideRedirect() ? BORDER_GRAB_AREA : 0);
+                CBox       box = BB.copy().expand(!w->backend().traits().overrideRedirect ? BORDER_GRAB_AREA : 0);
                 if (HITBOX_SHRINK > 0 && w != LASTFOCUSED)
                     box = box.copy().expand(-HITBOX_SHRINK);
                 if (box.containsPoint(pos))
                     return w;
 
-                if (!w->m_isX11) {
+                if (!w->backend().isX11()) {
                     if (w->hasPopupAt(pos))
                         return w;
                 }
@@ -93,27 +99,31 @@ PHLWINDOW CViewHitTester::windowAt(const Vector2D& pos, uint16_t properties, PHL
                         continue;
                 }
 
-                if (w->m_isFloating && w->m_isMapped && w->m_workspace->isVisible() && w->acceptsInput() && !w->m_pinned && !w->m_ruleApplicator->noFocus().valueOrDefault() &&
-                    w != ignoreWindow && (!aboveFullscreen || w->isAllowedOverFullscreen()) && !isShadowedByModal(w)) {
+                const bool ON_WORKSPACE = workspace ? w->m_workspace == workspace : w->m_workspace->visible();
+                if (w->isFloating() && w->mapped() && ON_WORKSPACE && w->acceptsInput() && !(w->m_state & WINDOW_STATE_PINNED) &&
+                    !w->m_ruleApplicator->noFocus().valueOrDefault() && w != ignoreWindow && (!aboveFullscreen || w->isAllowedOverFullscreen()) && !isShadowedByModal(w)) {
                     // OR windows should add focus to parent
-                    if (w->m_X11ShouldntFocus && !w->isX11OverrideRedirect())
+                    if (w->shouldntFocus() && !w->backend().traits().overrideRedirect)
                         continue;
 
                     const auto BB  = w->getWindowBoxUnified(properties);
-                    CBox       box = BB.copy().expand(!w->isX11OverrideRedirect() ? BORDER_GRAB_AREA : 0);
+                    CBox       box = BB.copy().expand(!w->backend().traits().overrideRedirect ? BORDER_GRAB_AREA : 0);
                     if (HITBOX_SHRINK > 0 && w != LASTFOCUSED)
                         box = box.copy().expand(-HITBOX_SHRINK);
                     if (box.containsPoint(pos)) {
-                        if (w->m_isX11 && w->isX11OverrideRedirect() && !w->m_xwaylandSurface->wantsFocus()) {
-                            // Override Redirect
-                            return focusState()->window(); // we kinda trick everything here.
-                            // TODO: this is wrong, we should focus the parent, but idk how to get it considering it's nullptr in most cases.
+                        if (w->backend().isX11()) {
+                            const auto TRAITS = w->backend().traits();
+                            if (TRAITS.overrideRedirect && !TRAITS.wantsFocus) {
+                                // Override Redirect
+                                return focusState()->window(); // we kinda trick everything here.
+                                // TODO: this is wrong, we should focus the parent, but idk how to get it considering it's nullptr in most cases.
+                            }
                         }
 
                         return w;
                     }
 
-                    if (!w->m_isX11) {
+                    if (!w->backend().isX11()) {
                         if (w->hasPopupAt(pos))
                             return w;
                     }
@@ -133,8 +143,7 @@ PHLWINDOW CViewHitTester::windowAt(const Vector2D& pos, uint16_t properties, PHL
         if (properties & FLOATING_ONLY)
             return floating(false);
 
-        const WORKSPACEID WSPID      = special ? PMONITOR->activeSpecialWorkspaceID() : PMONITOR->activeWorkspaceID();
-        const auto        PWORKSPACE = State::workspaceState()->query().id(WSPID).run();
+        const auto PWORKSPACE = workspace ? workspace : special ? PMONITOR->m_activeSpecialWorkspace : PMONITOR->m_activeWorkspace;
 
         if (Fullscreen::controller()->hasFullscreen(PWORKSPACE) && !(properties & SKIP_FULLSCREEN_PRIORITY) && !ONLY_PRIORITY) {
             const auto FS_WINDOW = Fullscreen::controller()->getFullscreenWindow(PWORKSPACE);
@@ -164,7 +173,7 @@ PHLWINDOW CViewHitTester::windowAt(const Vector2D& pos, uint16_t properties, PHL
             if (!w->m_workspace)
                 continue;
 
-            if (!w->m_isX11 && !w->m_isFloating && w->m_isMapped && w->workspaceID() == WSPID && w->acceptsInput() && !w->m_X11ShouldntFocus &&
+            if (!w->backend().isX11() && !w->isFloating() && w->mapped() && w->m_workspace == PWORKSPACE && w->acceptsInput() && !w->shouldntFocus() &&
                 !w->m_ruleApplicator->noFocus().valueOrDefault() && w != ignoreWindow && !isShadowedByModal(w)) {
                 if (w->hasPopupAt(pos))
                     return w;
@@ -181,11 +190,11 @@ PHLWINDOW CViewHitTester::windowAt(const Vector2D& pos, uint16_t properties, PHL
             if (!w->m_workspace)
                 continue;
 
-            if (!w->m_isFloating && w->m_isMapped && w->workspaceID() == WSPID && w->acceptsInput() && !w->m_X11ShouldntFocus && !w->m_ruleApplicator->noFocus().valueOrDefault() &&
+            if (!w->isFloating() && w->mapped() && w->m_workspace == PWORKSPACE && w->acceptsInput() && !w->shouldntFocus() && !w->m_ruleApplicator->noFocus().valueOrDefault() &&
                 w != ignoreWindow && !isShadowedByModal(w)) {
                 CBox box = (properties & USE_PROP_TILED) ? w->getWindowBoxUnified(properties) : w->layoutBox();
-                if ((properties & INPUT_EXTENTS) && BORDER_GRAB_AREA > 0 && !w->isX11OverrideRedirect()) {
-                    const auto WORKAREA                    = PWORKSPACE->m_space->workArea();
+                if ((properties & INPUT_EXTENTS) && BORDER_GRAB_AREA > 0 && !w->backend().traits().overrideRedirect) {
+                    const auto WORKAREA                    = PWORKSPACE->space()->workArea();
                     auto       isWindowCloseToWorkAreaEdge = [&](const Math::eDirection dir) -> bool {
                         constexpr double STICK_THRESHOLD = 2.0; // This constant is taken from isAdjacent in CWindowQuery::inDirection
                         double           aEdge           = -1;
@@ -240,6 +249,9 @@ PHLWINDOW CViewHitTester::windowAt(const Vector2D& pos, uint16_t properties, PHL
         return nullptr;
     };
 
+    if (workspace)
+        return windowForWorkspace(workspace->type() == Workspace::eWorkspaceType::SPECIAL);
+
     // special workspace
     if (PMONITOR->m_activeSpecialWorkspace && !*PSPECIALFALLTHRU)
         return windowForWorkspace(true);
@@ -258,10 +270,10 @@ SP<CWLSurfaceResource> CViewHitTester::windowSurfaceAt(const Vector2D& pos, PHLW
     if (!validMapped(window))
         return nullptr;
 
-    RASSERT(!window->m_isX11, "Cannot call windowSurfaceAt on an X11 window!");
+    RASSERT(!window->backend().isX11(), "Cannot call windowSurfaceAt on an X11 window!");
 
     // try popups first
-    const auto PPOPUP = window->m_popupHead->at(pos);
+    const auto PPOPUP = window->popupHead()->at(pos, true);
 
     if (PPOPUP) {
         const auto OFF = PPOPUP->coordsRelativeToParent();
@@ -282,11 +294,11 @@ Vector2D CViewHitTester::surfaceLocalAt(const Vector2D& pos, PHLWINDOW window, S
     if (!validMapped(window))
         return {};
 
-    if (window->m_isX11)
+    if (window->backend().isX11())
         return pos - window->position(Desktop::View::IGeometric::GEOMETRIC_GOAL);
 
-    const auto PPOPUP = window->m_popupHead->at(pos);
-    if (PPOPUP)
+    const auto PPOPUP = window->popupHead()->at(pos, true);
+    if (PPOPUP && PPOPUP->wlSurface()->resource() == surface)
         return pos - PPOPUP->coordsGlobal();
 
     std::tuple<SP<CWLSurfaceResource>, Vector2D> iterData = {surface, {-1337, -1337}};
@@ -299,21 +311,21 @@ Vector2D CViewHitTester::surfaceLocalAt(const Vector2D& pos, PHLWINDOW window, S
         },
         &iterData);
 
-    CBox geom = window->m_xdgSurface->m_current.geometry;
+    const CBox GEOMETRY = window->backend().geometry().box;
 
     if (std::get<1>(iterData) == Vector2D{-1337, -1337})
         return pos - window->position(Desktop::View::IGeometric::GEOMETRIC_GOAL);
 
-    return pos - window->position(Desktop::View::IGeometric::GEOMETRIC_GOAL) - std::get<1>(iterData) + Vector2D{geom.x, geom.y};
+    return pos - window->position(Desktop::View::IGeometric::GEOMETRIC_GOAL) - std::get<1>(iterData) + GEOMETRY.pos();
 }
 
 SP<CWLSurfaceResource> CViewHitTester::layerPopupSurfaceAt(const Vector2D& pos, PHLMONITOR monitor, Vector2D* surfaceCoords, PHLLS* layerFound) const {
     for (auto const& lsl : monitor->m_layerSurfaceLayers | std::views::reverse) {
         for (auto const& ls : lsl | std::views::reverse) {
-            if (!ls->aliveAndVisible())
+            if (!ls->mapped() || !ls->acceptsInput())
                 continue;
 
-            auto SURFACEAT = ls->m_popupHead->at(pos, true);
+            auto SURFACEAT = ls->popupHead()->at(pos, true);
 
             if (SURFACEAT) {
                 *layerFound    = ls.lock();
@@ -329,7 +341,7 @@ SP<CWLSurfaceResource> CViewHitTester::layerPopupSurfaceAt(const Vector2D& pos, 
 SP<CWLSurfaceResource> CViewHitTester::layerSurfaceAt(const Vector2D& pos, std::vector<PHLLSREF>* layerSurfaces, Vector2D* surfaceCoords, PHLLS* layerFound,
                                                       bool aboveLockscreen) const {
     for (auto const& ls : *layerSurfaces | std::views::reverse) {
-        if (!ls->aliveAndVisible() || (aboveLockscreen && ls->m_ruleApplicator->aboveLock().valueOrDefault() != 2))
+        if (!ls->mapped() || !ls->acceptsInput() || (aboveLockscreen && ls->m_ruleApplicator->aboveLock().valueOrDefault() != 2))
             continue;
 
         auto [surf, local] = ls->m_layerSurface->m_surface->at(pos - ls->m_geometry.pos(), true);

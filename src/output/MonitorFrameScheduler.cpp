@@ -3,6 +3,7 @@
 #include "../Compositor.hpp"
 #include "../render/Renderer.hpp"
 #include "../managers/eventLoop/EventLoopManager.hpp"
+#include "OutputCommitCoordinator.hpp"
 
 using namespace Render::GL;
 using namespace Monitor;
@@ -12,9 +13,9 @@ CMonitorFrameScheduler::CMonitorFrameScheduler(PHLMONITOR m) : m_monitor(m) {
 }
 
 bool CMonitorFrameScheduler::newSchedulingEnabled() {
-    static auto PENABLENEW = CConfigValue<Config::INTEGER>("render:new_render_scheduling");
+    static auto PENABLENEW = CConfigValue<Config::BOOL>("render:new_render_scheduling");
 
-    return *PENABLENEW && g_pHyprRenderer->explicitSyncSupported() && m_monitor && !m_monitor->m_directScanoutIsActive;
+    return *PENABLENEW && g_pHyprRenderer->explicitSyncSupported() && m_monitor && !m_monitor->m_directScanoutIsActive && (!m_monitor->m_commitCoordinator->asyncEnabled());
 }
 
 void CMonitorFrameScheduler::onSyncFired() {
@@ -25,20 +26,20 @@ void CMonitorFrameScheduler::onSyncFired() {
     // Sync fired: reset submitted state, set as rendered. Check the last render time. If we are running
     // late, we will instantly render here.
 
-    if (std::chrono::duration_cast<std::chrono::microseconds>(hrc::now() - m_lastRenderBegun).count() / 1000.F < 1000.F / PMONITOR->m_refreshRate) {
+    if (std::chrono::duration_cast<std::chrono::microseconds>(stc::now() - m_lastRenderBegun).count() / 1000.F < 1000.F / PMONITOR->m_refreshRate) {
         // we are in. Frame is valid. We can just render as normal.
-        Log::logger->log(Log::TRACE, "CMonitorFrameScheduler: {} -> onSyncFired, didn't miss.", PMONITOR->m_name);
+        LOG(Log::TRACE, "CMonitorFrameScheduler: {} -> onSyncFired, didn't miss.", PMONITOR->m_name);
         m_renderAtFrame = true;
         return;
     }
 
-    Log::logger->log(Log::TRACE, "CMonitorFrameScheduler: {} -> onSyncFired, missed.", PMONITOR->m_name);
+    LOG(Log::TRACE, "CMonitorFrameScheduler: {} -> onSyncFired, missed.", PMONITOR->m_name);
 
     // we are out. The frame is taking too long to render. Begin rendering immediately, but don't commit yet.
     m_pendingThird  = true;
     m_renderAtFrame = false; // block frame rendering, we already scheduled
 
-    m_lastRenderBegun = hrc::now();
+    m_lastRenderBegun = stc::now();
 
     // get a ref to ourselves. renderMonitor can destroy this scheduler if it decides to perform a monitor reload
     // FIXME: this is horrible. "renderMonitor" should not be able to do that.
@@ -60,11 +61,11 @@ void CMonitorFrameScheduler::onPresented() {
     if (!m_pendingThird)
         return;
 
-    Log::logger->log(Log::TRACE, "CMonitorFrameScheduler: {} -> onPresented, missed, committing pending.", PMONITOR->m_name);
+    LOG(Log::TRACE, "CMonitorFrameScheduler: {} -> onPresented, missed, committing pending.", PMONITOR->m_name);
 
     m_pendingThird = false;
 
-    Log::logger->log(Log::TRACE, "CMonitorFrameScheduler: {} -> onPresented, missed, committing pending at the earliest convenience.", PMONITOR->m_name);
+    LOG(Log::TRACE, "CMonitorFrameScheduler: {} -> onPresented, missed, committing pending at the earliest convenience.", PMONITOR->m_name);
 
     g_pEventLoopManager->doLater([m = PHLMONITORREF{PMONITOR}] {
         if (!m || !m->m_output)
@@ -107,13 +108,13 @@ void CMonitorFrameScheduler::onFrame() {
     }
 
     if (!m_renderAtFrame) {
-        Log::logger->log(Log::TRACE, "CMonitorFrameScheduler: {} -> frame event, but m_renderAtFrame = false.", PMONITOR->m_name);
+        LOG(Log::TRACE, "CMonitorFrameScheduler: {} -> frame event, but m_renderAtFrame = false.", PMONITOR->m_name);
         return;
     }
 
-    Log::logger->log(Log::TRACE, "CMonitorFrameScheduler: {} -> frame event, render = true, rendering normally.", PMONITOR->m_name);
+    LOG(Log::TRACE, "CMonitorFrameScheduler: {} -> frame event, render = true, rendering normally.", PMONITOR->m_name);
 
-    m_lastRenderBegun = hrc::now();
+    m_lastRenderBegun = stc::now();
 
     // get a ref to ourselves. renderMonitor can destroy this scheduler if it decides to perform a monitor reload
     // FIXME: this is horrible. "renderMonitor" should not be able to do that.
@@ -130,7 +131,7 @@ void CMonitorFrameScheduler::onFrame() {
 void CMonitorFrameScheduler::onFinishRender() {
     m_sync = g_pHyprRenderer->createSyncFDManager(); // this destroys the old sync
     if (!m_sync || !m_sync->isValid()) {
-        Log::logger->log(Log::ERR, "CMonitorFrameScheduler: explicit sync failed, falling back to frame events");
+        LOG(Log::ERR, "CMonitorFrameScheduler: explicit sync failed, falling back to frame events");
         m_sync.reset();
         m_renderAtFrame = true;
         return;
@@ -145,11 +146,14 @@ void CMonitorFrameScheduler::onFinishRender() {
 
 bool CMonitorFrameScheduler::canRender() {
     if ((g_pCompositor->m_aqBackend->hasSession() && !g_pCompositor->m_aqBackend->session->active) || !g_pCompositor->m_sessionActive) {
-        Log::logger->log(Log::WARN, "Attempted to render frame on inactive session!");
+        LOG(Log::WARN, "Attempted to render frame on inactive session!");
         return false; // cannot draw on session inactive (different tty)
     }
 
     if (!m_monitor->m_enabled)
+        return false;
+
+    if (!m_monitor->m_commitCoordinator->canBeginFrame())
         return false;
 
     return true;

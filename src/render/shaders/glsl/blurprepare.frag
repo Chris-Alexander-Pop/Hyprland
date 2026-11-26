@@ -11,14 +11,13 @@ uniform sampler2D tex;
 uniform float     contrast;
 uniform float     brightness;
 
-uniform int       sourceTF; // eTransferFunction
-uniform int       targetTF; // eTransferFunction
+const int         sourceTF = SOURCE_TF;
+const int         targetTF = TARGET_TF;
 
 #if USE_CM
 uniform vec2  srcTFRange;
 uniform vec2  dstTFRange;
 
-uniform float srcRefLuminance;
 uniform mat3  convertMatrix;
 
 uniform float sdrBrightnessMultiplier;
@@ -32,7 +31,7 @@ void main() {
     fragColor = fragColor = blurPrepare(texture(tex, v_texcoord), contrast, brightness
 #if USE_CM
                                         ,
-                                        sourceTF, targetTF, convertMatrix, srcTFRange, dstTFRange, srcRefLuminance, sdrBrightnessMultiplier
+                                        sourceTF, targetTF, convertMatrix, srcTFRange, dstTFRange, sdrBrightnessMultiplier
 #endif
     );
 }

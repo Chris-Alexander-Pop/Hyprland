@@ -1,9 +1,13 @@
 #include "ScreenshareManager.hpp"
 #include "../../render/Renderer.hpp"
 #include "../../Compositor.hpp"
-#include "../../desktop/view/Window.hpp"
+#include "../../desktop/view/window/Window.hpp"
+#include "../../desktop/view/window/WindowPresentation.hpp"
 #include "../../protocols/core/Seat.hpp"
 #include "../../state/MonitorState.hpp"
+#include "WorkspaceCaptureSource.hpp"
+#include "../permissions/DynamicPermissionManager.hpp"
+#include "hyprland-workspace-image-capture-source-v1.hpp"
 
 using namespace Screenshare;
 
@@ -11,7 +15,7 @@ CScreenshareManager::CScreenshareManager() {
     ;
 }
 
-void CScreenshareManager::onOutputCommit(PHLMONITOR monitor) {
+void CScreenshareManager::onOutputCommit(PHLMONITOR monitor, bool copyFBPrepared) {
     std::erase_if(m_sessions, [&](const WP<CScreenshareSession>& session) { return session.expired(); });
 
     // if no pending frames, and no sessions are sharing, then unblock ds
@@ -21,7 +25,6 @@ void CScreenshareManager::onOutputCommit(PHLMONITOR monitor) {
                 return;
         }
 
-        g_pHyprRenderer->m_directScanoutBlocked = false;
         return; // nothing to share
     }
 
@@ -30,6 +33,9 @@ void CScreenshareManager::onOutputCommit(PHLMONITOR monitor) {
             return;
 
         if (frame->m_session->monitor() != monitor)
+            return;
+
+        if (!copyFBPrepared && (frame->m_session->m_type == SHARE_MONITOR || frame->m_session->m_type == SHARE_REGION))
             return;
 
         if (frame->m_session->m_type == SHARE_WINDOW) {
@@ -46,7 +52,7 @@ void CScreenshareManager::onOutputCommit(PHLMONITOR monitor) {
 
 UP<CScreenshareSession> CScreenshareManager::newSession(wl_client* client, PHLMONITOR monitor) {
     if UNLIKELY (!monitor || !State::monitorState()->contains(monitor)) {
-        LOGM(Log::ERR, "Client requested sharing of a monitor that is gone");
+        LOG(Log::ERR, "Client requested sharing of a monitor that is gone");
         return nullptr;
     }
 
@@ -60,7 +66,7 @@ UP<CScreenshareSession> CScreenshareManager::newSession(wl_client* client, PHLMO
 
 UP<CScreenshareSession> CScreenshareManager::newSession(wl_client* client, PHLMONITOR monitor, CBox captureRegion) {
     if UNLIKELY (!monitor || !State::monitorState()->contains(monitor)) {
-        LOGM(Log::ERR, "Client requested sharing of a monitor that is gone");
+        LOG(Log::ERR, "Client requested sharing of a monitor that is gone");
         return nullptr;
     }
 
@@ -73,12 +79,26 @@ UP<CScreenshareSession> CScreenshareManager::newSession(wl_client* client, PHLMO
 }
 
 UP<CScreenshareSession> CScreenshareManager::newSession(wl_client* client, PHLWINDOW window) {
-    if UNLIKELY (!window || !window->m_isMapped) {
-        LOGM(Log::ERR, "Client requested sharing of window that is gone or not shareable!");
+    if UNLIKELY (!window || !window->mapped()) {
+        LOG(Log::ERR, "Client requested sharing of window that is gone or not shareable!");
         return nullptr;
     }
 
     UP<CScreenshareSession> session = UP<CScreenshareSession>(new CScreenshareSession(window, client));
+
+    session->m_self = session;
+    m_sessions.emplace_back(session);
+
+    return session;
+}
+
+UP<CScreenshareSession> CScreenshareManager::newSession(wl_client* client, SP<CWorkspaceCaptureSource> workspace) {
+    if UNLIKELY (!workspace) {
+        LOG(Log::ERR, "Client requested sharing of workspace that is gone or not shareable!");
+        return nullptr;
+    }
+
+    UP<CScreenshareSession> session = UP<CScreenshareSession>(new CScreenshareSession(workspace, client));
 
     session->m_self = session;
     m_sessions.emplace_back(session);
@@ -96,19 +116,24 @@ UP<CCursorshareSession> CScreenshareManager::newCursorSession(wl_client* client,
 }
 
 WP<CScreenshareSession> CScreenshareManager::getManagedSession(wl_client* client, PHLMONITOR monitor) {
-    return getManagedSession(SHARE_MONITOR, client, monitor, nullptr, {});
+    return getManagedSession(SHARE_MONITOR, client, monitor, nullptr, nullptr, {});
 }
 
 WP<CScreenshareSession> CScreenshareManager::getManagedSession(wl_client* client, PHLMONITOR monitor, CBox captureBox) {
 
-    return getManagedSession(SHARE_REGION, client, monitor, nullptr, captureBox);
+    return getManagedSession(SHARE_REGION, client, monitor, nullptr, nullptr, captureBox);
 }
 
 WP<CScreenshareSession> CScreenshareManager::getManagedSession(wl_client* client, PHLWINDOW window) {
-    return getManagedSession(SHARE_WINDOW, client, nullptr, window, {});
+    return getManagedSession(SHARE_WINDOW, client, nullptr, window, nullptr, {});
 }
 
-WP<CScreenshareSession> CScreenshareManager::getManagedSession(eScreenshareType type, wl_client* client, PHLMONITOR monitor, PHLWINDOW window, CBox captureBox) {
+WP<CScreenshareSession> CScreenshareManager::getManagedSession(wl_client* client, SP<CWorkspaceCaptureSource> workspace) {
+    return getManagedSession(SHARE_WORKSPACE, client, nullptr, nullptr, workspace, {});
+}
+
+WP<CScreenshareSession> CScreenshareManager::getManagedSession(eScreenshareType type, wl_client* client, PHLMONITOR monitor, PHLWINDOW window, SP<CWorkspaceCaptureSource> ws,
+                                                               CBox captureBox) {
     if (type == SHARE_NONE)
         return {};
 
@@ -119,6 +144,7 @@ WP<CScreenshareSession> CScreenshareManager::getManagedSession(eScreenshareType 
         switch (type) {
             case SHARE_MONITOR: return session->m_session->m_monitor == monitor;
             case SHARE_WINDOW: return session->m_session->m_window == window;
+            case SHARE_WORKSPACE: return session->m_session->m_workspace == ws;
             case SHARE_REGION: return session->m_session->m_monitor == monitor && session->m_session->m_captureBox == captureBox;
             case SHARE_NONE:
             default: return false;
@@ -132,10 +158,14 @@ WP<CScreenshareSession> CScreenshareManager::getManagedSession(eScreenshareType 
         switch (type) {
             case SHARE_MONITOR: session = UP<CScreenshareSession>(new CScreenshareSession(monitor, client)); break;
             case SHARE_WINDOW: session = UP<CScreenshareSession>(new CScreenshareSession(window, client)); break;
+            case SHARE_WORKSPACE: session = UP<CScreenshareSession>(new CScreenshareSession(ws, client)); break;
             case SHARE_REGION: session = UP<CScreenshareSession>(new CScreenshareSession(monitor, captureBox, client)); break;
             case SHARE_NONE:
             default: return {};
         }
+
+        if (!session->isActive())
+            return {};
 
         session->m_self = session;
         m_sessions.emplace_back(session);
@@ -160,6 +190,17 @@ bool CScreenshareManager::isOutputBeingSSd(PHLMONITOR monitor) {
         if (!s)
             return false;
         return s->isActive() && (s->m_type == SHARE_MONITOR || s->m_type == SHARE_REGION) && s->m_monitor == monitor;
+    });
+}
+
+bool CScreenshareManager::isOutputDSBlocked(PHLMONITOR monitor) {
+    if (std::ranges::any_of(m_pendingFrames, [monitor](const auto& frame) { return frame && !frame->done() && frame->m_shared && frame->m_session->monitor() == monitor; }))
+        return true;
+
+    return std::ranges::any_of(m_sessions, [monitor](const auto& s) {
+        if (!s)
+            return false;
+        return s->isActive() && !s->isStale() && s->monitor() == monitor;
     });
 }
 
@@ -200,6 +241,54 @@ CScreenshareManager::SOutputCopyFBState CScreenshareManager::outputCopyFBState(P
     return state;
 }
 
+bool CScreenshareManager::needsWorkspaceCaptureSnapshot(PHLWINDOW window) const {
+    if (!window || !window->mapped() || window->isHidden() || (window->m_ruleApplicator && window->m_ruleApplicator->noScreenShare().valueOrDefault()))
+        return false;
+
+    const auto MONITOR = window->presentation().monitor();
+    if (!MONITOR)
+        return false;
+
+    const auto includesWindow = [&](const WP<CScreenshareSession>& session) {
+        if (!session || !session->isActive() || session->m_type != SHARE_WORKSPACE || !session->m_workspace)
+            return false;
+
+        const auto WORKSPACE = session->m_workspace->workspace();
+        if (!WORKSPACE || session->monitor() != MONITOR)
+            return false;
+
+        if (window->presentation().workspace() != WORKSPACE &&
+            !(session->m_workspace->mode() == HYPRLAND_WORKSPACE_IMAGE_CAPTURE_SOURCE_MANAGER_V1_CAPTURE_MODE_EVERYTHING &&
+              (window->m_state & Desktop::View::WINDOW_STATE_PINNED) && window->isFloating()))
+            return false;
+
+        return g_pDynamicPermissionManager && g_pDynamicPermissionManager->clientPermissionMode(session->m_client, PERMISSION_TYPE_SCREENCOPY) == PERMISSION_RULE_ALLOW_MODE_ALLOW;
+    };
+
+    // Fresh sessions are not stale yet, but only actual copies set m_sharing.
+    for (const auto& session : m_sessions) {
+        if (session && session->m_sharing && includesWindow(session))
+            return true;
+    }
+
+    return std::ranges::any_of(m_pendingFrames, [&](const auto& frame) { return frame && frame->m_shared && !frame->done() && includesWindow(frame->m_session); });
+}
+
 CScreenshareManager::SManagedSession::SManagedSession(UP<CScreenshareSession>&& session) : m_session(std::move(session)) {
-    ;
+    // a new client can get a freed client's address and inherit its managed session.
+    // stop on client destroy so that we never inherit a stale one, as it won't block DS.
+    wl_list_init(&clientDestroyListener.link);
+    clientDestroyListener.notify = [](wl_listener* listener, void* data) {
+        SManagedSession* managed = wl_container_of(listener, managed, clientDestroyListener);
+        wl_list_remove(&listener->link);
+        wl_list_init(&listener->link);
+        managed->m_session->stop();
+    };
+
+    if (m_session->m_client)
+        wl_client_add_destroy_listener(m_session->m_client, &clientDestroyListener);
+}
+
+CScreenshareManager::SManagedSession::~SManagedSession() {
+    wl_list_remove(&clientDestroyListener.link);
 }

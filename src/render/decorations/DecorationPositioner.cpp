@@ -1,5 +1,6 @@
 #include "DecorationPositioner.hpp"
-#include "../../desktop/view/Window.hpp"
+#include "../../desktop/view/window/Window.hpp"
+#include "../../desktop/view/window/WindowPresentation.hpp"
 #include "../../layout/target/Target.hpp"
 #include "../../event/EventBus.hpp"
 
@@ -10,7 +11,7 @@ CDecorationPositioner::CDecorationPositioner() {
 
 Vector2D CDecorationPositioner::getEdgeDefinedPoint(uint32_t edges, PHLWINDOWREF pWindow) {
     if (!pWindow) {
-        Log::logger->log(Log::ERR, "getEdgeDefinedPoint: invalid pWindow");
+        LOG(Log::ERR, "getEdgeDefinedPoint: invalid pWindow");
         return {};
     }
 
@@ -22,7 +23,7 @@ Vector2D CDecorationPositioner::getEdgeDefinedPoint(uint32_t edges, PHLWINDOWREF
     const int  EDGESNO = TOP + BOTTOM + LEFT + RIGHT;
 
     if (EDGESNO == 0 || EDGESNO == 3 || EDGESNO > 4) {
-        Log::logger->log(Log::ERR, "getEdgeDefinedPoint: invalid number of edges");
+        LOG(Log::ERR, "getEdgeDefinedPoint: invalid number of edges");
         return {};
     }
 
@@ -50,7 +51,7 @@ Vector2D CDecorationPositioner::getEdgeDefinedPoint(uint32_t edges, PHLWINDOWREF
         if (BOTTOM && LEFT)
             return wb.pos() + Vector2D{0.0, wb.size().y};
     }
-    Log::logger->log(Log::ERR, "getEdgeDefinedPoint: invalid configuration of edges");
+    LOG(Log::ERR, "getEdgeDefinedPoint: invalid configuration of edges");
     return {};
 }
 
@@ -92,9 +93,7 @@ void CDecorationPositioner::sanitizeDatas() {
     m_needsSanitize = false;
     std::erase_if(m_windowDatas, [](const auto& other) { return !valid(other.first); });
     for (auto& [window, wd] : m_windowDatas) {
-        std::erase_if(wd.positioningDatas, [&](const auto& data) {
-            return std::ranges::find_if(window->m_windowDecorations, [&](const auto& el) { return el.get() == data->pDecoration; }) == window->m_windowDecorations.end();
-        });
+        std::erase_if(wd.positioningDatas, [&](const auto& data) { return !window->presentation().containsDecoration(data->pDecoration); });
     }
 }
 
@@ -120,7 +119,7 @@ void CDecorationPositioner::onWindowUpdate(PHLWINDOW pWindow) {
     // needsReposition is only true for newly-added decoration entries, so if the deco count
     // matches what we've cached, no new decos were added and we can skip the all_of scan too.
     if (WINDOWDATA->lastWindowSize == pWindow->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT) && !WINDOWDATA->needsRecalc) {
-        const auto expectedDecos = pWindow->m_windowDecorations.size();
+        const auto expectedDecos = pWindow->presentation().decorations().size();
         if (WINDOWDATA->positioningDatas.size() == expectedDecos && std::ranges::all_of(WINDOWDATA->positioningDatas, [](const auto& data) { return !data->needsReposition; }))
             return;
     }
@@ -131,9 +130,9 @@ void CDecorationPositioner::onWindowUpdate(PHLWINDOW pWindow) {
     //
     std::vector<CDecorationPositioner::SWindowPositioningData*> datas;
     // reserve to avoid reallocations
-    datas.reserve(pWindow->m_windowDecorations.size());
+    datas.reserve(pWindow->presentation().decorations().size());
 
-    for (auto const& wd : pWindow->m_windowDecorations) {
+    for (auto const& wd : pWindow->presentation().decorations()) {
         datas.push_back(getDataFor(wd.get(), pWindow));
     }
 
@@ -150,7 +149,7 @@ void CDecorationPositioner::onWindowUpdate(PHLWINDOW pWindow) {
     CBox wb = pWindow->getWindowMainSurfaceBox();
 
     // calc reserved
-    float reservedXL = 0, reservedYT = 0, reservedXR = 0, reservedYB = 0;
+    double reservedXL = 0, reservedYT = 0, reservedXR = 0, reservedYB = 0;
     for (size_t i = 0; i < datas.size(); ++i) {
         auto* const wd = datas[i];
 
@@ -174,7 +173,7 @@ void CDecorationPositioner::onWindowUpdate(PHLWINDOW pWindow) {
 
     WINDOWDATA->reserved = {{reservedXL, reservedYT}, {reservedXR, reservedYB}};
 
-    float stickyOffsetXL = 0, stickyOffsetYT = 0, stickyOffsetXR = 0, stickyOffsetYB = 0;
+    double stickyOffsetXL = 0, stickyOffsetYT = 0, stickyOffsetXR = 0, stickyOffsetYB = 0;
 
     for (size_t i = 0; i < datas.size(); ++i) {
         auto* const wd = datas[i];

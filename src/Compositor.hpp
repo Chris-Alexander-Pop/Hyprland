@@ -6,9 +6,9 @@
 
 #include "helpers/math/Direction.hpp"
 #include "managers/XWaylandManager.hpp"
-#include "managers/KeybindManager.hpp"
+#include "keybinds/Manager.hpp"
 #include "managers/SessionLockManager.hpp"
-#include "desktop/view/Window.hpp"
+#include "desktop/view/window/Window.hpp"
 #include "desktop/state/FadingOutState.hpp"
 #include "desktop/state/LayerState.hpp"
 #include "desktop/state/OtherViewState.hpp"
@@ -74,6 +74,7 @@ class CCompositor {
     bool                     m_desktopEnvSet          = false;
     bool                     m_wantsXwayland          = true;
     bool                     m_onlyConfigVerification = false;
+    bool                     m_sdSessionTarget        = false;
 
     // ------------------------------------------------- //
 
@@ -86,6 +87,7 @@ class CCompositor {
     bool                                shouldChangePreferredImageDescription();
 
     bool                                supportsDrmSyncobjTimeline() const;
+    bool                                shouldManageSdEnv() const;
     std::string                         m_explicitConfigPath;
 
   private:

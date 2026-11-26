@@ -20,7 +20,7 @@ UP<CConfigWatcher>& Config::watcher() {
 
 CConfigWatcher::CConfigWatcher() : m_inotifyFd(inotify_init1(IN_NONBLOCK | IN_CLOEXEC)) {
     if (!m_inotifyFd.isValid()) {
-        Log::logger->log(Log::ERR, "CConfigWatcher couldn't open an inotify node. Config will not be automatically reloaded");
+        LOG(Log::ERR, "CConfigWatcher couldn't open an inotify node. Config will not be automatically reloaded");
         return;
     }
 }
@@ -30,7 +30,7 @@ CFileDescriptor& CConfigWatcher::getInotifyFD() {
 }
 
 void CConfigWatcher::update() {
-    static const auto PDISABLEAUTORELOAD = CConfigValue<Config::INTEGER>("misc:disable_autoreload");
+    static const auto PDISABLEAUTORELOAD = CConfigValue<Config::BOOL>("misc:disable_autoreload");
     setWatchList(*PDISABLEAUTORELOAD ? std::vector<std::string>{} : Config::mgr()->getConfigPaths());
 }
 
@@ -88,19 +88,19 @@ void CConfigWatcher::onInotifyEvent() {
         const auto* ev = rc<const inotify_event*>(buffer.data() + offset);
 
         if (offset + sizeof(inotify_event) > sc<size_t>(bytesRead)) {
-            Log::logger->log(Log::ERR, "CConfigWatcher: malformed inotify event, truncated header");
+            LOG(Log::ERR, "CConfigWatcher: malformed inotify event, truncated header");
             break;
         }
 
         if (offset + sizeof(inotify_event) + ev->len > sc<size_t>(bytesRead)) {
-            Log::logger->log(Log::ERR, "CConfigWatcher: malformed inotify event, truncated name field");
+            LOG(Log::ERR, "CConfigWatcher: malformed inotify event, truncated name field");
             break;
         }
 
         const auto WD = std::ranges::find_if(m_watches, [wd = ev->wd](const auto& e) { return e.wd == wd; });
 
         if (WD == m_watches.end())
-            Log::logger->log(Log::ERR, "CConfigWatcher: got an event for wd {} which we don't have?!", ev->wd);
+            LOG(Log::ERR, "CConfigWatcher: got an event for wd {} which we don't have?!", ev->wd);
         else
             m_watchCallback(SConfigWatchEvent{
                 .file = WD->file,

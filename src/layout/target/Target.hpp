@@ -2,10 +2,11 @@
 
 #include "../../helpers/math/Math.hpp"
 #include "../../helpers/memory/Memory.hpp"
-#include "../../desktop/Workspace.hpp"
+#include "../../workspace/HLWorkspace.hpp"
 
 #include <expected>
 #include <cstdint>
+#include <optional>
 
 namespace Layout {
     enum eTargetType : uint8_t {
@@ -19,8 +20,9 @@ namespace Layout {
     };
 
     enum eTargetUpdateFlags : uint8_t {
-        TARGET_UPDATE_NONE                = 0,
-        TARGET_UPDATE_NO_CLIENT_CONFIGURE = 1 << 0,
+        TARGET_UPDATE_NONE                    = 0,
+        TARGET_UPDATE_NO_CLIENT_CONFIGURE     = 1 << 0,
+        TARGET_UPDATE_NO_UPDATE_RESTORE_CACHE = 1 << 1,
     };
 
     class CSpace;
@@ -33,6 +35,8 @@ namespace Layout {
     struct STargetBox {
         CBox logicalBox;
         CBox visualBox;
+        // Logical insets resolved against the current window border, rather than cached pixel gaps.
+        std::optional<SBoxExtents> visualGaps;
     };
 
     class ITarget {

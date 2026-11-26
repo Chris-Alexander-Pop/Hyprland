@@ -1,13 +1,20 @@
 #include "MonitorZoomController.hpp"
 
-#include <hyprlang.hpp>
+#include <algorithm>
 #include "../config/ConfigValue.hpp"
-#include "../managers/input/InputManager.hpp"
+#include "../pointer/PointerManager.hpp"
 #include "../render/OpenGL.hpp"
 #include "desktop/DesktopTypes.hpp"
 #include "render/Renderer.hpp"
 
 using namespace Monitor;
+
+float CMonitorZoomController::zoomFactor(float cursorZoom, float startupProgress, bool pointerOnMonitor) {
+    if (startupProgress != 1.F)
+        return 2.F - startupProgress;
+
+    return pointerOnMonitor ? std::max(1.F, cursorZoom) : 1.F;
+}
 
 void CMonitorZoomController::pinAnchor(const Vector2D& anchor) {
     m_pinnedAnchor = anchor;
@@ -18,22 +25,28 @@ void CMonitorZoomController::clearAnchor() {
     m_anchorPinned = false;
 }
 
+bool CMonitorZoomController::shouldDamageEntire(float zoomLevel) {
+    const bool CHANGED      = zoomLevel != m_lastRenderedZoomLevel;
+    m_lastRenderedZoomLevel = zoomLevel;
+    return zoomLevel != 1.F || CHANGED;
+}
+
 Vector2D CMonitorZoomController::getAnchor(const PHLMONITORREF& monitor) {
     if (m_anchorPinned)
         return m_pinnedAnchor;
 
-    return g_pInputManager->getMouseCoordsInternal() - monitor->m_position;
+    return Pointer::mgr()->untransformedPosition() - monitor->m_position;
 }
 
-void CMonitorZoomController::zoomWithDetachedCamera(CBox& result, const Render::SRenderData& m_renderData) {
-    static auto PZOOMRIGID = CConfigValue<Config::INTEGER>("cursor:zoom_rigid");
+void CMonitorZoomController::zoomWithDetachedCamera(Render::CRenderContext& ctx, CBox& result) {
+    static auto PZOOMRIGID = CConfigValue<Config::BOOL>("cursor:zoom_rigid");
 
-    const auto  m      = m_renderData.pMonitor;
+    const auto  m      = ctx.m_data.pMonitor;
     auto        monbox = CBox(0, 0, m->m_size.x, m->m_size.y);
-    const auto  ZOOM   = g_pHyprRenderer->m_renderData.mouseZoomFactor;
+    const auto  ZOOM   = ctx.m_data.mouseZoomFactor;
     const auto  MOUSE  = getAnchor(m);
 
-    if (m_lastZoomLevel != ZOOM) {
+    if (m_resetCameraState || m_lastZoomLevel != ZOOM) {
         if (m_resetCameraState) {
             m_resetCameraState = false;
             m_camera           = CBox(0, 0, m->m_size.x, m->m_size.y);
@@ -89,22 +102,22 @@ void CMonitorZoomController::zoomWithDetachedCamera(CBox& result, const Render::
     result = monbox;
 }
 
-void CMonitorZoomController::applyZoomTransform(CBox& monbox, const Render::SRenderData& m_renderData) {
-    static auto PZOOMRIGID          = CConfigValue<Config::INTEGER>("cursor:zoom_rigid");
-    static auto PZOOMDETACHEDCAMERA = CConfigValue<Config::INTEGER>("cursor:zoom_detached_camera");
-    const auto  ZOOM                = g_pHyprRenderer->m_renderData.mouseZoomFactor;
+void CMonitorZoomController::applyZoomTransform(Render::CRenderContext& ctx, CBox& monbox) {
+    static auto PZOOMRIGID          = CConfigValue<Config::BOOL>("cursor:zoom_rigid");
+    static auto PZOOMDETACHEDCAMERA = CConfigValue<Config::BOOL>("cursor:zoom_detached_camera");
+    const auto  ZOOM                = ctx.m_data.mouseZoomFactor;
 
     if (ZOOM == 1.F)
         return;
 
-    const auto m        = m_renderData.pMonitor;
+    const auto m        = ctx.m_data.pMonitor;
     const auto ORIGINAL = monbox;
     const auto INITANIM = m->m_zoomAnimProgress->value() != 1.0;
 
     if (*PZOOMDETACHEDCAMERA && !INITANIM)
-        zoomWithDetachedCamera(monbox, m_renderData);
+        zoomWithDetachedCamera(ctx, monbox);
     else {
-        const auto ZOOMCENTER = g_pHyprRenderer->m_renderData.mouseZoomUseMouse ? getAnchor(m) * m->m_scale : m->m_transformedSize / 2.f;
+        const auto ZOOMCENTER = ctx.m_data.mouseZoomUseMouse ? getAnchor(m) * m->m_scale : m->m_transformedSize / 2.f;
 
         monbox.translate(-ZOOMCENTER).scale(ZOOM).translate(*PZOOMRIGID ? m->m_transformedSize / 2.0 : ZOOMCENTER);
     }

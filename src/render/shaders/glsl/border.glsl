@@ -4,17 +4,15 @@
 #endif
 #include "cm_helpers.glsl"
 #include "gradient.glsl"
-#if USE_ROUNDING
 #include "rounding.glsl"
-#endif
 
 #if USE_MIRROR
 vec4[2]
 #else
 vec4
 #endif
-    getBorder(vec2 v_texcoord, float alpha, vec2 fullSizeUntransformed, float radiusOuter, float thick, float radius, float roundingPower, vec2 topLeft, vec2 fullSize,
-              int gradientLength, vec4 gradient[10], float angle, int gradient2Length, vec4 gradient2[10], float angle2, float gradientLerp
+    getBorder(vec2 v_texcoord, float alpha, vec2 fullSizeUntransformed, vec4 radiiOuter, float thick, vec4 radii, float roundingPower, vec2 topLeft, vec2 fullSize,
+              int gradientLength, vec4 gradient[10], float angle, int gradient2Length, vec4 gradient2[10], float angle2, float gradientLerp, vec4 gradientUV, vec4 gradient2UV
 #if USE_CM
               ,
               int sourceTF, int targetTF, mat3 convertMatrix, vec2 srcTFRange, vec2 dstTFRange
@@ -28,7 +26,7 @@ vec4
 #endif
 #if USE_TONEMAP
               ,
-              float maxLuminance, float dstMaxLuminance, float dstRefLuminance, float srcRefLuminance, int tonemapMode
+              float maxLuminance, float dstMaxLuminance, float dstRefLuminance, int tonemapMode
 #endif
 #if USE_SDR_MOD
               ,
@@ -48,6 +46,8 @@ vec4
     bool  done = false;
 
     pixCoord -= topLeft + fullSize * 0.5;
+    float radius      = cornerRadius(radii, pixCoord);
+    float radiusOuter = cornerRadius(radiiOuter, pixCoord);
     pixCoord *= vec2(lessThan(pixCoord, vec2(0.0))) * -2.0 + 1.0;
     pixCoordOuter = pixCoord;
     pixCoord -= fullSize * 0.5 - radius;
@@ -98,11 +98,12 @@ vec4
     if (additionalAlpha == 0.0)
         discard;
 
-    pixColor = getColorForCoord(v_texcoord, gradientLength, gradient, angle, gradient2Length, gradient2, angle2, gradientLerp);
+    pixColor = getColorForCoord(gradientUV.xy + v_texcoord * gradientUV.zw, gradient2UV.xy + v_texcoord * gradient2UV.zw, gradientLength, gradient, angle, gradient2Length,
+                                gradient2, angle2, gradientLerp);
     pixColor.rgb *= pixColor[3];
 
 #if USE_CM
-    return doColorManagement(pixColor, alpha * additionalAlpha, sourceTF, targetTF, convertMatrix, srcTFRange, dstTFRange
+    return doColorManagement(pixColor, alpha * additionalAlpha, sourceTF, targetTF, convertMatrix, srcTFRange, dstTFRange, 0.0
 #if USE_ICC
                              ,
                              iccLut3D, iccLutSize
@@ -113,7 +114,7 @@ vec4
 #endif
 #if USE_TONEMAP
                              ,
-                             maxLuminance, dstMaxLuminance, dstRefLuminance, srcRefLuminance, tonemapMode
+                             maxLuminance, dstMaxLuminance, dstRefLuminance, tonemapMode
 #endif
 #if USE_SDR_MOD
                              ,

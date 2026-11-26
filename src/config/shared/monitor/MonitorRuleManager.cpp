@@ -4,7 +4,6 @@
 #include "../../../protocols/OutputManagement.hpp"
 #include "../../../output/Monitor.hpp"
 #include "../../../Compositor.hpp"
-#include "../../../render/Renderer.hpp"
 #include "../../../event/EventBus.hpp"
 #include "../../../managers/eventLoop/EventLoopManager.hpp"
 #include "../../../managers/fullscreen/FullscreenController.hpp"
@@ -48,35 +47,35 @@ CMonitorRule CMonitorRuleManager::get(const PHLMONITOR PMONITOR) {
         if (!CONFIG)
             return rule;
 
-        Log::logger->log(Log::DEBUG, "CConfigManager::getMonitorRuleFor: found a wlr_output_manager override for {}", PMONITOR->m_name);
+        LOG(Log::DEBUG, "CConfigManager::getMonitorRuleFor: found a wlr_output_manager override for {}", PMONITOR->m_name);
 
-        Log::logger->log(Log::DEBUG, " > overriding enabled: {} -> {}", !rule.m_disabled, !CONFIG->enabled);
+        LOG(Log::DEBUG, " > overriding enabled: {} -> {}", !rule.m_disabled, !CONFIG->enabled);
         rule.m_disabled = !CONFIG->enabled;
 
         if ((CONFIG->committedProperties & OUTPUT_HEAD_COMMITTED_MODE) || (CONFIG->committedProperties & OUTPUT_HEAD_COMMITTED_CUSTOM_MODE)) {
-            Log::logger->log(Log::DEBUG, " > overriding mode: {:.0f}x{:.0f}@{:.2f}Hz -> {:.0f}x{:.0f}@{:.2f}Hz", rule.m_resolution.x, rule.m_resolution.y, rule.m_refreshRate,
-                             CONFIG->resolution.x, CONFIG->resolution.y, CONFIG->refresh / 1000.F);
+            LOG(Log::DEBUG, " > overriding mode: {:.0f}x{:.0f}@{:.2f}Hz -> {:.0f}x{:.0f}@{:.2f}Hz", rule.m_resolution.x, rule.m_resolution.y, rule.m_refreshRate,
+                CONFIG->resolution.x, CONFIG->resolution.y, CONFIG->refresh / 1000.F);
             rule.m_resolution  = CONFIG->resolution;
             rule.m_refreshRate = CONFIG->refresh / 1000.F;
         }
 
         if (CONFIG->committedProperties & OUTPUT_HEAD_COMMITTED_POSITION) {
-            Log::logger->log(Log::DEBUG, " > overriding offset: {:.0f}, {:.0f} -> {:.0f}, {:.0f}", rule.m_offset.x, rule.m_offset.y, CONFIG->position.x, CONFIG->position.y);
+            LOG(Log::DEBUG, " > overriding offset: {:.0f}, {:.0f} -> {:.0f}, {:.0f}", rule.m_offset.x, rule.m_offset.y, CONFIG->position.x, CONFIG->position.y);
             rule.m_offset = CONFIG->position;
         }
 
         if (CONFIG->committedProperties & OUTPUT_HEAD_COMMITTED_TRANSFORM) {
-            Log::logger->log(Log::DEBUG, " > overriding transform: {} -> {}", sc<uint8_t>(rule.m_transform), sc<uint8_t>(CONFIG->transform));
+            LOG(Log::DEBUG, " > overriding transform: {} -> {}", sc<uint8_t>(rule.m_transform), sc<uint8_t>(CONFIG->transform));
             rule.m_transform = CONFIG->transform;
         }
 
         if (CONFIG->committedProperties & OUTPUT_HEAD_COMMITTED_SCALE) {
-            Log::logger->log(Log::DEBUG, " > overriding scale: {} -> {}", sc<uint8_t>(rule.m_scale), sc<uint8_t>(CONFIG->scale));
+            LOG(Log::DEBUG, " > overriding scale: {} -> {}", sc<uint8_t>(rule.m_scale), sc<uint8_t>(CONFIG->scale));
             rule.m_scale = CONFIG->scale;
         }
 
         if (CONFIG->committedProperties & OUTPUT_HEAD_COMMITTED_ADAPTIVE_SYNC) {
-            Log::logger->log(Log::DEBUG, " > overriding vrr: {} -> {}", rule.m_vrr.value_or(0), CONFIG->adaptiveSync);
+            LOG(Log::DEBUG, " > overriding vrr: {} -> {}", rule.m_vrr.value_or(0), CONFIG->adaptiveSync);
             rule.m_vrr = sc<int>(CONFIG->adaptiveSync);
         }
 
@@ -98,14 +97,14 @@ CMonitorRule CMonitorRuleManager::get(const PHLMONITOR PMONITOR) {
             return applyWlrOutputConfig(r);
     }
 
-    Log::logger->log(Log::WARN, "No rule found for {}, trying to use the first.", PMONITOR->m_name);
+    LOG(Log::WARN, "No rule found for {}, trying to use the first.", PMONITOR->m_name);
 
     for (auto const& r : m_rules) {
         if (r.m_name.empty())
             return applyWlrOutputConfig(r);
     }
 
-    Log::logger->log(Log::WARN, "No rules configured. Using the default hardcoded one.");
+    LOG(Log::WARN, "No rules configured. Using the default hardcoded one.");
 
     CMonitorRule fallbackRule;
     fallbackRule.m_autoDir    = eAutoDirs::DIR_AUTO_RIGHT;
@@ -142,22 +141,34 @@ void CMonitorRuleManager::ensureMonitorStatus() {
 
         auto rule = get(m);
 
+        bool mustApplySoft = false;
+
+        // check if mirror matches first of all
+        if (!!m->m_mirrorOf == rule.m_mirrorOf.empty()) {
+            // mismatch: we either have a mirror and rule says HEEEELLL NAW or the other way
+
+            if (m->m_mirrorOf)
+                mustApplySoft = true;
+            else if (std::ranges::any_of(State::monitorState()->monitors(), [&rule](const auto& m) { return m->matchesStaticSelector(rule.m_mirrorOf); }))
+                mustApplySoft = true;
+        }
+
         auto cmp = rule.compare(m->m_activeMonitorRule);
 
-        if (cmp == COMPARISON_FULL_MATCH)
+        if (!mustApplySoft && cmp == COMPARISON_FULL_MATCH)
             continue;
 
         m->m_splash = nullptr;
 
         monsForRefresh.emplace_back(m);
 
-        if (cmp == COMPARISON_SOFT_MISMATCH) {
+        if (cmp != COMPARISON_NO_MATCH) {
             m->applyMonitorRuleSoft(Config::CMonitorRule{rule});
             continue;
         }
 
         if (!m->applyMonitorRule(Config::CMonitorRule{rule})) {
-            Log::logger->log(Log::ERR, "[MonitorRuleManager] failed to apply rule to {}!", m->m_name);
+            LOG(Log::ERR, "[MonitorRuleManager] failed to apply rule to {}!", m->m_name);
             continue;
         }
     }
@@ -181,15 +192,6 @@ void CMonitorRuleManager::ensureMonitorStatus() {
 
     State::monitorLayoutController()->arrange();
     State::monitorLayoutController()->checkOverlapsAndNotify();
-
-    for (const auto& m : monsForRefresh) {
-        if (!m->m_output)
-            continue;
-
-        g_pHyprRenderer->arrangeLayersForMonitor(m->m_id);
-    }
-
-    Event::bus()->m_events.monitor.layoutChanged.emit();
 }
 
 void CMonitorRuleManager::ensureVRR(PHLMONITOR pMonitor) {
@@ -207,7 +209,7 @@ void CMonitorRuleManager::ensureVRR(PHLMONITOR pMonitor) {
                 m->m_output->state->setAdaptiveSync(false);
 
                 if (!m->m_state.commit())
-                    Log::logger->log(Log::ERR, "Couldn't commit output {} in ensureVRR -> false", m->m_output->name);
+                    LOG(Log::ERR, "Couldn't commit output {} in ensureVRR -> false", m->m_output->name);
             }
             m->m_vrrActive = false;
             return;
@@ -226,12 +228,12 @@ void CMonitorRuleManager::ensureVRR(PHLMONITOR pMonitor) {
                     m->m_output->state->setAdaptiveSync(true);
 
                     if (!m->m_state.test()) {
-                        Log::logger->log(Log::DEBUG, "Pending output {} does not accept VRR.", m->m_output->name);
+                        LOG(Log::DEBUG, "Pending output {} does not accept VRR.", m->m_output->name);
                         m->m_output->state->setAdaptiveSync(false);
                     }
 
                     if (!m->m_state.commit())
-                        Log::logger->log(Log::ERR, "Couldn't commit output {} in ensureVRR -> true", m->m_output->name);
+                        LOG(Log::ERR, "Couldn't commit output {} in ensureVRR -> true", m->m_output->name);
                 }
                 m->m_vrrActive = true;
             } else {
@@ -240,7 +242,7 @@ void CMonitorRuleManager::ensureVRR(PHLMONITOR pMonitor) {
                     m->m_output->state->setAdaptiveSync(false);
 
                     if (!m->m_state.commit())
-                        Log::logger->log(Log::ERR, "Couldn't commit output {} in ensureVRR -> false", m->m_output->name);
+                        LOG(Log::ERR, "Couldn't commit output {} in ensureVRR -> false", m->m_output->name);
                 }
                 m->m_vrrActive = false;
             }
@@ -264,7 +266,7 @@ void CMonitorRuleManager::ensureVRR(PHLMONITOR pMonitor) {
                     m->m_output->state->setAdaptiveSync(true);
 
                     if (!m->m_state.test()) {
-                        Log::logger->log(Log::DEBUG, "Pending output {} does not accept VRR.", m->m_output->name);
+                        LOG(Log::DEBUG, "Pending output {} does not accept VRR.", m->m_output->name);
                         m->m_output->state->setAdaptiveSync(false);
                     }
                 }

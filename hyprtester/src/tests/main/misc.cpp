@@ -133,21 +133,21 @@ TEST_CASE(misc) {
     OK(getFromSocket("/eval hl.config({ misc = { close_special_on_empty = false } })"));
     OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = 'special:test' })"));
 
-    Tests::spawnKitty();
+    SPAWN_KITTY("a");
 
     {
         auto str = getFromSocket("/monitors");
-        ASSERT_CONTAINS(str, "special workspace: -");
+        ASSERT_CONTAINS(str, "special workspace: special:test (special:test)");
     }
 
     Tests::killAllWindows();
 
     {
         auto str = getFromSocket("/monitors");
-        ASSERT_CONTAINS(str, "special workspace: -");
+        ASSERT_CONTAINS(str, "special workspace: special:test (special:test)");
     }
 
-    Tests::spawnKitty();
+    SPAWN_KITTY("a");
 
     OK(getFromSocket("/eval hl.config({ misc = { close_special_on_empty = true } })"));
 
@@ -155,7 +155,7 @@ TEST_CASE(misc) {
 
     {
         auto str = getFromSocket("/monitors");
-        ASSERT_NOT_CONTAINS(str, "special workspace: -");
+        ASSERT_NOT_CONTAINS(str, "special workspace: special:test (special:test)");
     }
 }
 

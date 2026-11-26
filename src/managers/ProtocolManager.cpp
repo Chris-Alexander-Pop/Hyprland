@@ -38,6 +38,7 @@
 #include "../protocols/Viewporter.hpp"
 #include "../protocols/MesaDRM.hpp"
 #include "../protocols/LinuxDMABUF.hpp"
+#include "../protocols/ColorRepresentation.hpp"
 #include "../protocols/DRMLease.hpp"
 #include "../protocols/DRMSyncobj.hpp"
 #include "../protocols/Screencopy.hpp"
@@ -65,6 +66,7 @@
 #include "../protocols/XDGTag.hpp"
 #include "../protocols/XDGBell.hpp"
 #include "../protocols/Hotkey.hpp"
+#include "../protocols/XXHotkey.hpp"
 #include "../protocols/ExtWorkspace.hpp"
 #include "../protocols/ExtDataDevice.hpp"
 #include "../protocols/PointerWarp.hpp"
@@ -124,17 +126,17 @@ void CProtocolManager::onMonitorModeChange(PHLMONITOR pMonitor) {
     }
 
     if (PROTO::colorManagement && g_pCompositor->shouldChangePreferredImageDescription()) {
-        Log::logger->log(Log::ERR, "FIXME: color management protocol is enabled, need a preferred image description id");
+        LOG(Log::ERR, "FIXME: color management protocol is enabled, need a preferred image description id");
         PROTO::colorManagement->onImagePreferredChanged(0);
     }
 }
 
 CProtocolManager::CProtocolManager() {
 
-    static const auto PENABLECM = CConfigValue<Config::INTEGER>("render:cm_enabled");
-    static const auto PDEBUGCM  = CConfigValue<Config::INTEGER>("debug:full_cm_proto");
-    static const auto PCMV1_2   = CConfigValue<Config::INTEGER>("experimental:wp_cm_1_2");
-    static const auto PENABLECT = CConfigValue<Config::INTEGER>("render:commit_timing_enabled");
+    static const auto PENABLECM = CConfigValue<Config::BOOL>("render:cm_enabled");
+    static const auto PDEBUGCM  = CConfigValue<Config::BOOL>("debug:full_cm_proto");
+    static const auto PCMV1_2   = CConfigValue<Config::BOOL>("experimental:wp_cm_1_2");
+    static const auto PENABLECT = CConfigValue<Config::BOOL>("render:commit_timing_enabled");
 
     // Outputs are a bit dumb, we have to agree.
     static auto P = Event::bus()->m_events.monitor.added.listen([this](PHLMONITOR M) {
@@ -208,12 +210,13 @@ CProtocolManager::CProtocolManager() {
     PROTO::singlePixel         = makeUnique<CSinglePixelProtocol>(&wp_single_pixel_buffer_manager_v1_interface, 1, "SinglePixel");
     PROTO::securityContext     = makeUnique<CSecurityContextProtocol>(&wp_security_context_manager_v1_interface, 1, "SecurityContext");
     PROTO::ctm                 = makeUnique<CHyprlandCTMControlProtocol>(&hyprland_ctm_control_manager_v1_interface, 2, "CTMControl");
-    PROTO::inputCapture        = makeUnique<CInputCaptureProtocol>(&hyprland_input_capture_manager_v1_interface, 1, "InputCapture");
+    PROTO::inputCapture        = makeUnique<CInputCaptureProtocol>(&hyprland_input_capture_manager_v1_interface, 2, "InputCapture");
     PROTO::hyprlandSurface     = makeUnique<CHyprlandSurfaceProtocol>(&hyprland_surface_manager_v1_interface, 2, "HyprlandSurface");
     PROTO::contentType         = makeUnique<CContentTypeProtocol>(&wp_content_type_manager_v1_interface, 1, "ContentType");
     PROTO::xdgTag              = makeUnique<CXDGToplevelTagProtocol>(&xdg_toplevel_tag_manager_v1_interface, 1, "XDGTag");
     PROTO::xdgBell             = makeUnique<CXDGSystemBellProtocol>(&xdg_system_bell_v1_interface, 1, "XDGBell");
     PROTO::hotkey              = makeUnique<CHotkeyProtocol>(&vicinae_hotkey_manager_v1_interface, 1, "Hotkey");
+    PROTO::xxHotkey            = makeUnique<CXXHotkeyProtocol>(&xx_hotkey_manager_v1_interface, 1, "XXHotkey");
     PROTO::extWorkspace        = makeUnique<CExtWorkspaceProtocol>(&ext_workspace_manager_v1_interface, 1, "ExtWorkspace");
     PROTO::extDataDevice       = makeUnique<CExtDataDeviceProtocol>(&ext_data_control_manager_v1_interface, 1, "ExtDataDevice");
     PROTO::pointerWarp         = makeUnique<CPointerWarpProtocol>(&wp_pointer_warp_v1_interface, 1, "PointerWarp");
@@ -249,17 +252,20 @@ CProtocolManager::CProtocolManager() {
         if (g_pHyprRenderer->explicitSyncSupported() && !PROTO::sync) {
             if (g_pCompositor->supportsDrmSyncobjTimeline()) {
                 PROTO::sync = makeUnique<CDRMSyncobjProtocol>(&wp_linux_drm_syncobj_manager_v1_interface, 1, "DRMSyncobj");
-                Log::logger->log(Log::DEBUG, "DRM Syncobj Timeline support detected, enabling explicit sync protocol");
+                LOG(Log::DEBUG, "DRM Syncobj Timeline support detected, enabling explicit sync protocol");
             } else
-                Log::logger->log(Log::WARN, "DRM Syncobj Timeline not supported, skipping explicit sync protocol");
+                LOG(Log::WARN, "DRM Syncobj Timeline not supported, skipping explicit sync protocol");
         }
     }
 
     if (!g_pHyprRenderer->getDRMFormats().empty()) {
         PROTO::mesaDRM  = makeUnique<CMesaDRMProtocol>(&wl_drm_interface, 2, "MesaDRM");
         PROTO::linuxDma = makeUnique<CLinuxDMABufV1Protocol>(&zwp_linux_dmabuf_v1_interface, 5, "LinuxDMABUF");
+
+        // yuv only comes in dmabufs
+        PROTO::colorRepresentation = makeUnique<CColorRepresentationProtocol>(&wp_color_representation_manager_v1_interface, 1, "ColorRepresentation");
     } else
-        Log::logger->log(Log::WARN, "ProtocolManager: Not binding linux-dmabuf and MesaDRM: DMABUF not available");
+        LOG(Log::WARN, "ProtocolManager: Not binding linux-dmabuf and MesaDRM: DMABUF not available");
 }
 
 CProtocolManager::~CProtocolManager() {
@@ -327,6 +333,7 @@ CProtocolManager::~CProtocolManager() {
     PROTO::xdgTag.reset();
     PROTO::xdgBell.reset();
     PROTO::hotkey.reset();
+    PROTO::xxHotkey.reset();
     PROTO::extWorkspace.reset();
     PROTO::extDataDevice.reset();
     PROTO::pointerWarp.reset();
@@ -343,6 +350,7 @@ CProtocolManager::~CProtocolManager() {
     PROTO::sync.reset();
     PROTO::mesaDRM.reset();
     PROTO::linuxDma.reset();
+    PROTO::colorRepresentation.reset();
 }
 
 bool CProtocolManager::isGlobalPrivileged(const wl_global* global) {
@@ -396,6 +404,7 @@ bool CProtocolManager::isGlobalPrivileged(const wl_global* global) {
         PROTO::sync     ? PROTO::sync->getGlobal()      : nullptr,
         PROTO::mesaDRM  ? PROTO::mesaDRM->getGlobal()   : nullptr,
         PROTO::linuxDma ? PROTO::linuxDma->getGlobal()  : nullptr,
+        PROTO::colorRepresentation ? PROTO::colorRepresentation->getGlobal() : nullptr,
 	PROTO::colorManagement ? PROTO::colorManagement->getGlobal() : nullptr,
     };
     // clang-format on

@@ -95,7 +95,7 @@ def parse_binding_tree(root: Path) -> tuple[ApiNode, set[str]]:
     register_header = re.compile(
         r"void\s+(?:(?:Config::Lua::Bindings::)?Internal::)?register\w+Bindings\s*\([^)]*\)\s*\{", re.MULTILINE
     )
-    set_fn = re.compile(r'(?:Internal::)?set(?:Mgr)?Fn\(\s*L\s*,(?:\s*mgr\s*,)?\s*"([^"]+)"\s*,')
+    set_fn = re.compile(r'(?:Internal::)?set(?:Mgr|Dispatcher)?Fn\(\s*L\s*,(?:\s*mgr\s*,)?\s*"([^"]+)"\s*,')
     set_field = re.compile(r'lua_setfield\(L,\s*-2,\s*"([^"]+)"\s*\);')
 
     for cpp in sorted(lua_dir.rglob("*.cpp")):
@@ -243,7 +243,8 @@ def lua_type_from_config_ctor(ctor: str) -> str:
         "CLuaConfigString": "string",
         "CLuaConfigColor": "string",
         "CLuaConfigVec2": "HL.Vec2Like",
-        "CLuaConfigCssGap": "integer|HL.CssGap",
+        "CLuaConfigCssGap": "number|HL.CssGap",
+        "CLuaConfigCorners": "integer|boolean|HL.Corners",
         "CLuaConfigFontWeight": "integer|string",
         "CLuaConfigGradient": "string|HL.Gradient",
     }
@@ -262,7 +263,8 @@ def parse_config_values(root: Path) -> dict[str, str]:
         "String": "string",
         "Color": "string",
         "Vec2": "HL.Vec2Like",
-        "CssGap": "integer|HL.CssGap",
+        "CssGap": "number|HL.CssGap",
+        "Corners": "integer|boolean|HL.Corners",
         "FontWeight": "integer|string",
         "Gradient": "string|HL.Gradient",
     }
@@ -342,6 +344,7 @@ def extract_initializer_body(source: str, array_name: str) -> str:
 
 def parse_descriptor_fields(root: Path) -> dict[str, dict[str, str]]:
     source = read_text(root / "src/config/lua/bindings/LuaBindingsConfigRules.cpp")
+    source += "\n" + read_text(root / "src/config/lua/bindings/LuaBindingsInternal.hpp")
     arrays = {
         "MONITOR_FIELDS": "HL.MonitorSpec",
         "DEVICE_FIELDS": "HL.DeviceSpec",
@@ -416,7 +419,7 @@ def query_struct_to_type(struct_name: str) -> str:
     if name.startswith("S") and len(name) > 1:
         name = name[1:]
     if name.endswith("Query"):
-        name = name + "Filter"
+        name = f"{name}Filter"
     return f"HL.{name}"
 
 
@@ -504,7 +507,7 @@ def emit_class_block(class_name: str, fields: list[tuple[str, str, bool]], opera
         lines.append(f"---@field ['{quoted}'] {type_with_optional}")
 
     if (emit_local_var):
-        local_name = "__" + class_name.replace(".", "_")
+        local_name = f"__{class_name.replace('.', '_')}"
         lines.append(f"local {local_name} = {{}}")
     return lines
 
@@ -519,9 +522,10 @@ def generate_stub(root: Path) -> str:
     query_types, query_overrides = parse_query_filter_types(root)
 
     api_signatures: dict[str, str] = {
-        "hl.on": "fun(event: HL.EventName, cb: fun(...)): HL.EventSubscription",
         "hl.bind": "fun(keys: string, dispatcher: HL.Dispatcher|function, opts?: HL.BindOptions): HL.Keybind",
         "hl.dispatch": "fun(dispatcher: HL.Dispatcher|function): any",
+        "hl.dsp.exec_raw": "fun(cmd: string): HL.Dispatcher",
+        "hl.dsp.exec_cmd": "fun(cmd: string, rules?: table<string, string|number|boolean>): HL.Dispatcher",
         "hl.define_submap": "fun(name: string, reset_or_fn: string|function, fn?: function): nil",
         "hl.timer": "fun(callback: function, opts: HL.TimerOptions): HL.Timer",
         "hl.config": "fun(config: HL.ConfigOpt): nil",
@@ -541,7 +545,7 @@ def generate_stub(root: Path) -> str:
         "hl.get_workspace": "fun(selector: HL.WorkspaceSelector): HL.Workspace|nil",
         "hl.get_active_workspace": "fun(monitor?: HL.MonitorSelector): HL.Workspace|nil",
         "hl.get_active_special_workspace": "fun(monitor?: HL.MonitorSelector): HL.Workspace|nil",
-        "hl.get_monitors": "fun(): HL.Monitor[]",
+        "hl.get_monitors": "fun(options?: HL.GetMonitorsOptions): HL.Monitor[]",
         "hl.get_monitor": "fun(selector: HL.MonitorSelector): HL.Monitor|nil",
         "hl.get_active_monitor": "fun(): HL.Monitor|nil",
         "hl.get_monitor_at": "fun(x: number|HL.Vec2, y?: number): HL.Monitor|nil",
@@ -549,6 +553,7 @@ def generate_stub(root: Path) -> str:
         "hl.get_layers": "fun(filters?: HL.LayerQueryFilter): HL.LayerSurface[]",
         "hl.get_workspace_windows": "fun(workspace: HL.WorkspaceSelector): HL.Window[]",
         "hl.get_cursor_pos": "fun(): HL.Vec2|nil",
+        "hl.get_devices": "fun(): HL.Device[]",
         "hl.get_last_window": "fun(): HL.Window|nil",
         "hl.get_last_workspace": "fun(monitor?: HL.MonitorSelector): HL.Workspace|nil",
         "hl.get_current_submap": "fun(): string",
@@ -556,12 +561,42 @@ def generate_stub(root: Path) -> str:
         "hl.notification.get": "fun(): HL.Notification[]",
         "hl.layout.register": "fun(name: string, provider: HL.LayoutProvider): nil",
         "hl.exec_cmd": "fun(cmd: string, rules?: table<string, string|number|boolean>): nil",
+        "hl.get_loaded_plugins": "fun(): HL.Plugin[]",
+        "hl.is_key_down": "fun(key: number|string): boolean",
+        "hl.version": "fun(): string",
+        "hl.clear_crashed_lockscreen": "fun(): nil",
+        "hl.exec_scheduled_prop_refresh_immediately": "fun(): nil",
+        "hl.unbind": "fun(key: string): nil",
+        "hl.get_scrolling_offset": "fun(): number | nil",
+        "hl.set_scrolling_offset": "fun(key: number): boolean"
     }
     api_signatures.update(query_overrides)
 
     object_method_signatures: dict[tuple[str, str], str] = {
         ("HL.Group", "add"): "fun(self: HL.Group, window: HL.Window, index?: integer)",
         ("HL.Group", "remove"): "fun(self: HL.Group, window_or_index: HL.Window|integer)",
+    }
+
+    # Helper-based __index implementations need explicit field types and optionality.
+    object_field_overrides: dict[str, dict[str, tuple[str, bool]]] = {
+        "HL.Device": {
+            "type": ('"pointer"|"keyboard"|"tablet"|"tablet_pad"|"tablet_tool"|"touch"|"switch"', True),
+            "address": ("string", True),
+            "name": ("string", True),
+            "default_speed": ("number", True),
+            "scroll_factor": ("number", True),
+            "rules": ("string", True),
+            "model": ("string", True),
+            "layout": ("string", True),
+            "variant": ("string", True),
+            "options": ("string", True),
+            "active_keymap": ("string", True),
+            "active_layout_index": ("integer", True),
+            "caps_lock": ("boolean", True),
+            "num_lock": ("boolean", True),
+            "main": ("boolean", True),
+            "belongs_to": ("{address:string, name:string}", True),
+        },
     }
 
     lines: list[str] = []
@@ -578,11 +613,23 @@ def generate_stub(root: Path) -> str:
     lines.append("---@alias HL.WorkspaceSelector string|integer|HL.Workspace")
     lines.append("---@alias HL.WindowSelector string|integer|HL.Window")
     lines.append("---@alias HL.Vec2Like HL.Vec2|{x:number, y:number}|{number, number}|string")
-    lines.append("---@alias HL.CssGap integer|{top?:integer, right?:integer, bottom?:integer, left?:integer}")
-    lines.append("---@alias HL.Gradient string|{colors:string[], angle?:number}")
+    lines.append("---@alias HL.CssGap number|{top?:number, right?:number, bottom?:number, left?:number}")
+    lines.append("---@alias HL.Corners {top_left?:integer, top_right?:integer, bottom_right?:integer, bottom_left?:integer}")
+    lines.append("---@alias HL.Gradient string|{colors:string[], angle?:number, whole_monitor?:boolean}")
     lines.append("")
     lines.append("---@class HL.Dispatcher")
     lines.append("local __HL_Dispatcher = {}")
+    lines.append("")
+
+    lines.extend(
+        emit_class_block(
+            "HL.WindowStateUpdate",
+            [
+                ("float", "boolean", True),
+                ("pin", "boolean", True),
+            ],
+        )
+    )
     lines.append("")
 
     lines.extend(
@@ -686,6 +733,16 @@ def generate_stub(root: Path) -> str:
 
     lines.extend(
         emit_class_block(
+            "HL.GetMonitorsOptions",
+            [
+                ("all", "boolean", True),
+            ],
+        )
+    )
+    lines.append("")
+
+    lines.extend(
+        emit_class_block(
             "HL.GestureSpec",
             [
                 ("fingers", "integer", False),
@@ -728,6 +785,19 @@ def generate_stub(root: Path) -> str:
     )
     lines.append("")
 
+    lines.extend(
+        emit_class_block(
+            "HL.Plugin",
+            [
+                ("name", "string", True),
+                ("author", "string", True),
+                ("version", "string", True),
+                ("description", "string", True),
+            ],
+        )
+    )
+    lines.append("")
+
     for class_name in sorted(query_types.keys()):
         fields = [(name, typ, True) for name, typ in sorted(query_types[class_name].items())]
         lines.extend(emit_class_block(class_name, fields))
@@ -752,10 +822,12 @@ def generate_stub(root: Path) -> str:
         for key in sorted(obj.methods):
             method_type = object_method_signatures.get((class_name, key), f"fun(self: {class_name}, ...): any")
             fields.append((key, method_type, False))
-        for key, typ in sorted(obj.fields.items()):
+        field_types = {key: (typ, False) for key, typ in obj.fields.items()}
+        field_types.update(object_field_overrides.get(class_name, {}))
+        for key, (typ, optional) in sorted(field_types.items()):
             if key in obj.methods:
                 continue
-            fields.append((key, typ, False))
+            fields.append((key, typ, optional))
 
         lines.extend(emit_class_block(class_name, fields))
         lines.append("")
@@ -764,10 +836,12 @@ def generate_stub(root: Path) -> str:
         class_name = namespace_class_name(path)
         fields: list[tuple[str, str, bool]] = []
 
-        full_prefix = "hl" + ("." + ".".join(path) if path else "")
+        full_prefix = ".".join(["hl", *path])
 
         for method in sorted(node.methods):
             full_name = f"{full_prefix}.{method}"
+            if full_name == "hl.on":
+                continue
             default_method_type = "fun(...): HL.Dispatcher" if path and path[0] == "dsp" else "fun(...): any"
             method_type = api_signatures.get(full_name, default_method_type)
             fields.append((method, method_type, False))
@@ -789,6 +863,13 @@ def generate_stub(root: Path) -> str:
             emit_namespace(node.children[child_name], path + [child_name])
 
     emit_namespace(api_tree, [])
+
+    lines.append('---@overload fun(event: "window.update_state", cb: fun(window: HL.Window|nil, changes: HL.WindowStateUpdate)): HL.EventSubscription')
+    lines.append("---@param event HL.EventName")
+    lines.append("---@param cb fun(...)")
+    lines.append("---@return HL.EventSubscription")
+    lines.append("function __HL_API.on(event, cb) end")
+    lines.append("")
 
     lines.append("---@type HL.API")
     lines.append("hl = {}")

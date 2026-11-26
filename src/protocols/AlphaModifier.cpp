@@ -28,6 +28,7 @@ void CAlphaModifier::setResource(UP<CWpAlphaModifierSurfaceV1>&& resource) {
         }
 
         m_alpha = alpha / sc<float>(UINT32_MAX);
+        markPending();
     });
 
     m_listeners.surfaceCommitted = m_surface->m_events.commit.listen([this] {
@@ -54,9 +55,15 @@ void CAlphaModifier::setResource(UP<CWpAlphaModifierSurfaceV1>&& resource) {
 void CAlphaModifier::destroy() {
     m_resource.reset();
     m_alpha = 1.F;
+    markPending();
 
     if (!m_surface)
         PROTO::alphaModifier->destroyAlphaModifier(this);
+}
+
+void CAlphaModifier::markPending() {
+    if (m_surface)
+        m_surface->m_pending.updated.bits.alphaModifier = true;
 }
 
 CAlphaModifierProtocol::CAlphaModifierProtocol(const wl_interface* iface, const int& ver, const std::string& name) : IWaylandProtocol(iface, ver, name) {
@@ -85,7 +92,7 @@ void CAlphaModifierProtocol::getSurface(CWpAlphaModifierV1* manager, uint32_t id
 
     if (iter != m_alphaModifiers.end()) {
         if (iter->second->m_resource) {
-            LOGM(Log::ERR, "AlphaModifier already present for surface {:x}", (uintptr_t)surface.get());
+            LOG(Log::ERR, "AlphaModifier already present for surface {:x}", (uintptr_t)surface.get());
             manager->error(WP_ALPHA_MODIFIER_V1_ERROR_ALREADY_CONSTRUCTED, "AlphaModifier already present");
             return;
         } else {

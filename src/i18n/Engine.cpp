@@ -251,6 +251,13 @@ I18n::CI18nEngine::CI18nEngine() {
     registerEntry("en_US", TXT_KEY_NOTIF_CM_RELOAD_FAILED, "CM shader reload failed, falling back to rgba/rgbx.");
     registerEntry("en_US", TXT_KEY_NOTIF_WIDE_COLOR_NOT_10B, "Monitor {name}: wide color gamut is enabled but the display is not in 10-bit mode.");
     registerEntry("en_US", TXT_KEY_NOTIF_NO_WATCHDOG, "Hyprland was started without start-hyprland. This is strongly discouraged unless you are in a debugging environment.");
+    registerEntry("en_US", TXT_KEY_NOTIF_DEPRECATED_CONFIG_OPTS, [](const Hyprutils::I18n::translationVarMap& vars) {
+        int assetsNo = std::stoi(vars.at("count"));
+        if (assetsNo <= 1)
+            return "You are using {count} deprecated config option. Run hyprctl deprecated-config to see more information.";
+        return "You are using {count} deprecated config options. Run hyprctl deprecated-config to see more information.";
+    });
+    registerEntry("en_US", TXT_KEY_NOTIF_NO_FP16, "Your GPU does not support rendering to FP16 buffers, some effects and CM settings might be unavailable.");
 
     registerEntry("en_US", TXT_KEY_SAFE_MODE_TITLE, "Safe Mode");
     registerEntry("en_US", TXT_KEY_SAFE_MODE_DESCRIPTION,
@@ -678,8 +685,10 @@ I18n::CI18nEngine::CI18nEngine() {
 
     registerEntry("id_ID", TXT_KEY_PERMISSION_REQUEST_UNKNOWN, "Aplikasi <b>{app}</b> meminta izin yang tidak dikenali.");
     registerEntry("id_ID", TXT_KEY_PERMISSION_REQUEST_SCREENCOPY, "Aplikasi <b>{app}</b> mencoba merekam layar Anda.\n\nApakah Anda mengizinkannya?");
+    registerEntry("id_ID", TXT_KEY_PERMISSION_REQUEST_CURSOR_POS, "Aplikasi <b>{app}</b> mencoba mengambil posisi kursor Anda.\n\nApakah Anda mengizinkannya?");
     registerEntry("id_ID", TXT_KEY_PERMISSION_REQUEST_PLUGIN, "Aplikasi <b>{app}</b> mencoba memuat <i>plugin</i>: <b>{plugin}</b>.\n\nApakah Anda mengizinkannya?");
     registerEntry("id_ID", TXT_KEY_PERMISSION_REQUEST_KEYBOARD, "Keyboard baru terdeteksi: <b>{keyboard}</b>.\n\nApakah Anda mengizinkannya beroperasi?");
+    registerEntry("id_ID", TXT_KEY_PERMISSION_REQUEST_INPUT_CAPTURE, "Aplikasi <b>{app}</b> mencoba merekam input Anda.\n\nApakah Anda mengizinkannya?");
     registerEntry("id_ID", TXT_KEY_PERMISSION_UNKNOWN_NAME, "(tidak diketahui)");
     registerEntry("id_ID", TXT_KEY_PERMISSION_TITLE, "Permintaan Izin");
     registerEntry("id_ID", TXT_KEY_PERMISSION_PERSISTENCE_HINT, "Petunjuk: Anda dapat mengatur <i>rule</i> ini secara permanen di <i>file</i> konfigurasi Hyprland.");
@@ -708,6 +717,24 @@ I18n::CI18nEngine::CI18nEngine() {
     registerEntry("id_ID", TXT_KEY_NOTIF_FAILED_TO_LOAD_PLUGIN, "Gagal memuat plugin {name}: {error}");
     registerEntry("id_ID", TXT_KEY_NOTIF_CM_RELOAD_FAILED, "Gagal memuat ulang shader CM, kembali ke rgba/rgbx.");
     registerEntry("id_ID", TXT_KEY_NOTIF_WIDE_COLOR_NOT_10B, "Monitor {name}: <i>wide color gamut</i> aktif tetapi layar tidak dalam mode 10-bit.");
+    registerEntry("id_ID", TXT_KEY_NOTIF_NO_WATCHDOG, "Hyprland dijalankan tanpa start-hyprland. Hal ini sangat tidak disarankan kecuali Anda berada di lingkungan debugging.");
+    registerEntry("id_ID", TXT_KEY_NOTIF_DEPRECATED_CONFIG_OPTS, [](const Hyprutils::I18n::translationVarMap& vars) {
+        int assetsNo = std::stoi(vars.at("count"));
+        if (assetsNo <= 1)
+            return "Anda menggunakan {count} opsi konfigurasi yang sudah usang. Jalankan hyprctl deprecated-config untuk informasi lebih lanjut.";
+        return "Anda menggunakan {count} opsi konfigurasi yang sudah usang. Jalankan hyprctl deprecated-config untuk informasi lebih lanjut.";
+    });
+    registerEntry("id_ID", TXT_KEY_NOTIF_NO_FP16, "GPU Anda tidak mendukung rendering ke buffer FP16, beberapa pengaturan efek dan CM mungkin tidak tersedia.");
+
+    registerEntry("id_ID", TXT_KEY_SAFE_MODE_TITLE, "Mode Aman");
+    registerEntry("id_ID", TXT_KEY_SAFE_MODE_DESCRIPTION,
+                  "Hyprland dijalankan dalam mode aman, yang berarti sesi terakhir Anda mengalami crash.\nMode aman mencegah konfigurasi Anda dimuat. Anda dapat "
+                  "melakukan penelusuran masalah di lingkungan ini, atau memuat konfigurasi Anda dengan tombol di bawah.\nKeybind bawaan berlaku: SUPER+Q untuk "
+                  "kitty, SUPER+R untuk runner dasar, SUPER+M untuk keluar.\nMemulai ulang "
+                  "Hyprland akan menjalankannya dalam mode normal kembali.");
+    registerEntry("id_ID", TXT_KEY_SAFE_MODE_BUTTON_LOAD_CONFIG, "Muat konfigurasi");
+    registerEntry("id_ID", TXT_KEY_SAFE_MODE_BUTTON_OPEN_CRASH_REPORT_DIR, "Buka direktori laporan crash");
+    registerEntry("id_ID", TXT_KEY_SAFE_MODE_BUTTON_UNDERSTOOD, "Oke, tutup ini");
 
     // hr_HR (Croatian)
     registerEntry("hr_HR", TXT_KEY_ANR_TITLE, "Aplikacija ne reagira");
@@ -833,6 +860,8 @@ I18n::CI18nEngine::CI18nEngine() {
     registerEntry("ja_JP", TXT_KEY_NOTIF_CM_RELOAD_FAILED, "CM シェーダのリロードに失敗したため、rgba/rgbx を使用します。");
     registerEntry("ja_JP", TXT_KEY_NOTIF_WIDE_COLOR_NOT_10B, "広色域が有効なモニタ {name} を使用していますが、画面表示の設定は 10 ビットになっていません。");
     registerEntry("ja_JP", TXT_KEY_NOTIF_NO_WATCHDOG, "start-hyprland なしで Hyprland を実行しています。これは、デバッグ目的以外ではおすすめしません。");
+    registerEntry("ja_JP", TXT_KEY_NOTIF_NO_FP16, "お使いのGPUはFP16バッファがサポートしていないため、一部のエフェクトやCM設定を利用できない可能性があります。");
+    registerEntry("ja_JP", TXT_KEY_NOTIF_DEPRECATED_CONFIG_OPTS, "廃止済みのオプションが{count}件使用されています。詳細は、hyprctl deprecated-configで確認してください。");
 
     registerEntry("ja_JP", TXT_KEY_SAFE_MODE_TITLE, "セーフモード");
     registerEntry("ja_JP", TXT_KEY_SAFE_MODE_DESCRIPTION,
@@ -1174,6 +1203,19 @@ I18n::CI18nEngine::CI18nEngine() {
     registerEntry("pl_PL", TXT_KEY_NOTIF_CM_RELOAD_FAILED, "Nie udało się przeładować shader'a CM, użyto rgba/rgbx.");
     registerEntry("pl_PL", TXT_KEY_NOTIF_WIDE_COLOR_NOT_10B, "Monitor {name}: skonfigurowano szeroką głębię barw, ale monitor nie jest w trybie 10-bit.");
     registerEntry("pl_PL", TXT_KEY_NOTIF_NO_WATCHDOG, "Hyprland został uruchomiony bez start-hyprland. Nie jest to zalecane, chyba, że jest to środowisko do debugowania.");
+    registerEntry("pl_PL", TXT_KEY_NOTIF_NO_FP16, "Twoja karta graficzna nie obsługuje buforów FP16, niektóre efekty i ustawienia zarządzania kolorami mogą być niedostępne.");
+    registerEntry("pl_PL", TXT_KEY_NOTIF_DEPRECATED_CONFIG_OPTS, [](const Hyprutils::I18n::translationVarMap& vars) {
+        int opts = std::stoi(vars.at("count"));
+        if (opts == 1)
+            return "1 przestarzała opcja konfiguracji jest w użyciu. Sprawdź hyprctl deprecated-config po więcej informacji.";
+
+        int last    = opts % 10;
+        int lastTwo = opts % 100;
+        if (last >= 2 && last <= 4 && !(lastTwo >= 12 && lastTwo <= 14))
+            return "{count} przestarzałe opcje konfiguracji są w użyciu. Sprawdź hyprctl deprecated-config po więcej informacji.";
+
+        return "{count} przestarzałych opcji konfiguracji jest w użyciu. Sprawdź hyprctl deprecated-config po więcej informacji.";
+    });
 
     registerEntry("pl_PL", TXT_KEY_SAFE_MODE_TITLE, "Tryb Bezpieczny");
     registerEntry("pl_PL", TXT_KEY_SAFE_MODE_DESCRIPTION,

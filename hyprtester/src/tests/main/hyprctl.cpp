@@ -3,17 +3,34 @@
 #include "../../hyprctlCompat.hpp"
 #include <cstdint>
 #include <string>
+#include <format>
 #include <hyprutils/os/Process.hpp>
 #include <hyprutils/memory/WeakPtr.hpp>
+#include <hyprutils/utils/ScopeGuard.hpp>
 #include "../shared.hpp"
 
 using namespace Hyprutils::OS;
 using namespace Hyprutils::Memory;
+using namespace Hyprutils::Utils;
 
 #define UP CUniquePointer
 #define SP CSharedPointer
 
-static std::string getCommandStdOut(std::string command) {
+static constexpr auto CONFIGURED_DESCRIPTION_VALUES = R"(
+    def matches($name; $default; $current):
+        ([.[] | select(.name == $name)] |
+            length == 1 and
+            .[0].default == $default and
+            .[0].current == $current);
+
+    matches("general:border_size"; 1; 2) and
+    matches("general:snap:enabled"; false; true) and
+    matches("decoration:rounding"; 0; 10) and
+    matches("master:new_status"; "slave"; "master") and
+    matches("scrolling:follow_min_visible"; 0.4; 1)
+)";
+
+static std::string    getCommandStdOut(std::string command) {
     CProcess process("bash", {"-c", command});
     process.addEnv("HYPRLAND_INSTANCE_SIGNATURE", HIS);
     process.runSync();
@@ -24,8 +41,22 @@ static std::string getCommandStdOut(std::string command) {
     return stdOut.substr(0, stdOut.length() - 1);
 }
 
+static bool descriptionsMatch(const std::string& filter) {
+    CProcess jqProc("bash", {"-c", std::format("hyprctl descriptions | jq -e '{}'", filter)});
+    jqProc.addEnv("HYPRLAND_INSTANCE_SIGNATURE", HIS);
+    jqProc.runSync();
+    return jqProc.exitCode() == 0;
+}
+
+static bool hyprctlJsonMatches(const std::string& command, const std::string& filter) {
+    CProcess jqProc("bash", {"-c", std::format("hyprctl -j {} | jq -e '{}'", command, filter)});
+    jqProc.addEnv("HYPRLAND_INSTANCE_SIGNATURE", HIS);
+    jqProc.runSync();
+    return jqProc.exitCode() == 0;
+}
+
 static void setWindowProp(const std::string& selector, const std::string& prop, const std::string& value) {
-    getFromSocket("/dispatch hl.dsp.window.set_prop({ window = '" + selector + "', prop = '" + prop + "', value = '" + value + "' })");
+    getFromSocket(std::format("/dispatch hl.dsp.window.set_prop({{ window = '{}', prop = '{}', value = '{}' }})", selector, prop, value));
 }
 
 TEST_CASE(hyprctlDevicesActiveLayoutIndex) {
@@ -34,18 +65,16 @@ TEST_CASE(hyprctlDevicesActiveLayoutIndex) {
 
     for (uint8_t i = 0; i < 3; i++) {
         // set layout
-        getFromSocket("/switchxkblayout all " + std::to_string(i));
+        getFromSocket(std::format("/switchxkblayout all {}", i));
         std::string devicesJson = getFromSocket("j/devices");
-        std::string expected    = R"("active_layout_index": )" + std::to_string(i);
+        std::string expected    = std::format(R"("active_layout_index": {})", i);
         // check layout index
         EXPECT_CONTAINS(devicesJson, expected);
     }
 }
 
 TEST_CASE(hyprctlGetprop) {
-    if (!Tests::spawnKitty()) {
-        FAIL_TEST("Could not spawn kitty");
-    }
+    SPAWN_KITTY("kitty");
 
     // animation
     EXPECT(getCommandStdOut("hyprctl getprop class:kitty animation"), "(unset)");
@@ -160,15 +189,171 @@ TEST_CASE(hyprctlSubmap) {
     EXPECT(getCommandStdOut("hyprctl submap -j | jq -r \".\""), "default");
 }
 
+TEST_CASE(hyprctlRoundingConfigOutput) {
+    CScopeGuard guard = {[]() { getFromSocket("/reload"); }};
+
+    OK(getFromSocket("/eval hl.config({ decoration = { rounding = 10 } })"));
+    EXPECT(getFromSocket("/getoption decoration:rounding"), "int: 10\nset: true");
+    EXPECT(hyprctlJsonMatches("getoption decoration:rounding", ".int == 10 and (has(\"corners\") | not) and (has(\"css\") | not)"), true);
+    EXPECT(getFromSocket("/getoption decoration.rounding"), "int: 10\nset: true");
+    EXPECT(hyprctlJsonMatches("getoption decoration.rounding", ".int == 10 and (has(\"corners\") | not) and (has(\"css\") | not)"), true);
+    OK(getFromSocket("/eval assert(hl.get_config('decoration:rounding') == 10)"));
+
+    OK(getFromSocket("/eval hl.config({ decoration = { rounding = { top_left = 1, top_right = 2, bottom_right = 3, bottom_left = 4 } } })"));
+    EXPECT(getFromSocket("/getoption decoration:rounding"), "corners: 1 2 3 4\nset: true");
+    EXPECT(hyprctlJsonMatches("getoption decoration:rounding", ".corners == \"1 2 3 4\" and (has(\"int\") | not) and (has(\"css\") | not)"), true);
+    EXPECT(hyprctlJsonMatches("getoption decoration.rounding", ".corners == \"1 2 3 4\" and (has(\"int\") | not) and (has(\"css\") | not)"), true);
+    EXPECT(descriptionsMatch(R"(any(.[]; .name == "decoration:rounding" and .default == 0 and .current == "1 2 3 4" and .min == 0 and .max == 100))"), true);
+    OK(getFromSocket("/eval local r = hl.get_config('decoration:rounding'); assert(type(r) == 'table' and r.top_left == 1 and r.top_right == 2 and r.bottom_right == 3 and "
+                     "r.bottom_left == 4 and r.top == nil and r.right == nil and r.bottom == nil and r.left == nil)"));
+
+    for (const auto invalid : {
+             "{top = 9}",
+             "{right = 9}",
+             "{bottom = 9}",
+             "{left = 9}",
+             "{top_left = 9, unknown = 5}",
+             "{1, 2, 3, 4}",
+             "{top_left = 9, [1] = 2}",
+             "-1",
+             "101",
+             "{top_left = 9, bottom_left = 101}",
+         }) {
+        NOK(getFromSocket(std::format("/eval hl.config({{ decoration = {{ rounding = {} }} }})", invalid)));
+        EXPECT(getFromSocket("/getoption decoration:rounding"), "corners: 1 2 3 4\nset: true");
+    }
+    OK(getFromSocket("/eval local r = hl.get_config('decoration:rounding'); assert(r.top_left == 1 and r.top_right == 2 and r.bottom_right == 3 and r.bottom_left == 4)"));
+
+    OK(getFromSocket("/eval hl.config({ decoration = { rounding = { top_right = 7 } } })"));
+    EXPECT(hyprctlJsonMatches("getoption decoration:rounding", ".corners == \"0 7 0 0\""), true);
+
+    // Equal named fields preserve the original scalar API shape, too.
+    OK(getFromSocket("/eval hl.config({ decoration = { rounding = { top_left = 4, top_right = 4, bottom_right = 4, bottom_left = 4 } } })"));
+    EXPECT(getFromSocket("/getoption decoration:rounding"), "int: 4\nset: true");
+    EXPECT(hyprctlJsonMatches("getoption decoration:rounding", ".int == 4"), true);
+    EXPECT(descriptionsMatch(R"(any(.[]; .name == "decoration:rounding" and .default == 0 and .current == 4))"), true);
+    OK(getFromSocket("/eval assert(hl.get_config('decoration:rounding') == 4)"));
+
+    OK(getFromSocket("/eval hl.config({ decoration = { rounding = true } }); assert(hl.get_config('decoration:rounding') == 1)"));
+    OK(getFromSocket("/eval hl.config({ decoration = { rounding = {} } }); assert(hl.get_config('decoration:rounding') == 0)"));
+}
+
+TEST_CASE(hyprctlRoundingOverrides) {
+    CScopeGuard guard = {[]() {
+        Tests::killAllWindows();
+        getFromSocket("/reload");
+        getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })");
+    }};
+
+    OK(getFromSocket("/eval hl.config({ decoration = { rounding = { top_left = 1, top_right = 2, bottom_right = 3, bottom_left = 4 }, rounding_power = 4 } })"));
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '69' })"));
+    SPAWN_KITTY("kitty_rounding");
+
+    const auto rounding = []() { return getFromSocket("/getprop class:kitty_rounding rounding"); };
+    EXPECT(rounding(), "1 2 3 4");
+    setWindowProp("class:kitty_rounding", "rounding", "relative +2");
+    EXPECT(rounding(), "3 4 5 6");
+    setWindowProp("class:kitty_rounding", "rounding", "unset");
+    EXPECT(rounding(), "1 2 3 4");
+
+    OK(getFromSocket("r/eval hl.workspace_rule({ workspace = '69', no_rounding = true })"));
+    EXPECT(rounding(), "0");
+    setWindowProp("class:kitty_rounding", "rounding", "relative 1");
+    EXPECT(rounding(), "1");
+    setWindowProp("class:kitty_rounding", "rounding", "unset");
+    EXPECT(rounding(), "0");
+
+    OK(getFromSocket("r/eval _G.hyprtester_rounding_rule = hl.window_rule({ name = 'hyprtester-rounding', match = { class = '^kitty_rounding$' }, "
+                     "rounding = { top_left = 10, top_right = 20, bottom_right = 30, bottom_left = 40 } })"));
+    EXPECT(rounding(), "10 20 30 40");
+
+    for (const auto invalid : {
+             "{top = 9}",
+             "{right = 9}",
+             "{bottom = 9}",
+             "{left = 9}",
+             "{top_left = 9, unknown = 5}",
+             "{1, 2, 3, 4}",
+             "{top_left = 9, [1] = 2}",
+             "-1",
+             "101",
+             "{top_left = 9, bottom_left = 101}",
+         }) {
+        NOK(getFromSocket(std::format("r/eval hl.window_rule({{ name = 'hyprtester-rounding', rounding = {} }})", invalid)));
+        EXPECT(rounding(), "10 20 30 40");
+    }
+
+    // Raw values survive power adjustment and a window smaller than the requested radii.
+    OK(getFromSocket("/dispatch hl.dsp.window.float({ action = 'set', window = 'class:kitty_rounding' })"));
+    setWindowProp("class:kitty_rounding", "max_size", "40 40");
+    setWindowProp("class:kitty_rounding", "rounding", "25 50 75 100");
+    EXPECT(rounding(), "25 50 75 100");
+    EXPECT(getFromSocket("j/getprop class:kitty_rounding rounding"), R"({"rounding": [25,50,75,100]})");
+
+    OK(getFromSocket("r/eval hl.window_rule({ name = 'hyprtester-rounding', rounding = { top_right = 7 } })"));
+    EXPECT(rounding(), "25 50 75 100");
+    setWindowProp("class:kitty_rounding", "rounding", "unset");
+    EXPECT(rounding(), "0 7 0 0");
+    setWindowProp("class:kitty_rounding", "rounding", "relative -3");
+    EXPECT(rounding(), "0 4 0 0");
+
+    for (const auto invalid : {"-1 20 -3 40", "-5", "101", "1 2 3 101", "1 2 3 bad"}) {
+        NOK(getFromSocket(std::format("/dispatch hl.dsp.window.set_prop({{ window = 'class:kitty_rounding', prop = 'rounding', value = '{}' }})", invalid)));
+        EXPECT(rounding(), "0 4 0 0");
+    }
+
+    setWindowProp("class:kitty_rounding", "rounding", "1 2 3 99");
+    setWindowProp("class:kitty_rounding", "rounding", "relative 5");
+    EXPECT(rounding(), "6 7 8 100");
+
+    setWindowProp("class:kitty_rounding", "rounding", "unset");
+    EXPECT(rounding(), "0 7 0 0");
+    OK(getFromSocket("r/eval hl.window_rule({ name = 'hyprtester-rounding', rounding = true })"));
+    EXPECT(rounding(), "1");
+    EXPECT(getFromSocket("j/getprop class:kitty_rounding rounding"), R"({"rounding": 1})");
+    OK(getFromSocket("/eval _G.hyprtester_rounding_rule:set_enabled(false)"));
+    EXPECT(rounding(), "0");
+    OK(getFromSocket("r/eval hl.workspace_rule({ workspace = '69', no_rounding = false })"));
+    EXPECT(rounding(), "1 2 3 4");
+
+    OK(getFromSocket("r/eval hl.config({ decoration = { rounding = { bottom_left = 9 } } })"));
+    EXPECT(rounding(), "0 0 0 9");
+    OK(getFromSocket("/reload"));
+    EXPECT(rounding(), "10");
+}
+
 TEST_CASE(hyprctlJsonErrors) {
-    CProcess jqProc("bash", {"-c", "hyprctl descriptions | jq"});
-    jqProc.addEnv("HYPRLAND_INSTANCE_SIGNATURE", HIS);
-    jqProc.runSync();
-    EXPECT(jqProc.exitCode(), 0);
+    EXPECT(descriptionsMatch(R"(type == "array")"), true);
+}
+
+TEST_CASE(hyprctlDescriptionsCurrentValues) {
+    EXPECT(descriptionsMatch(CONFIGURED_DESCRIPTION_VALUES), true);
+
+    OK(getFromSocket(
+        "/eval hl.config({ general = { border_size = 7, snap = { enabled = false } }, master = { new_status = 'inherit' }, scrolling = { follow_min_visible = 0.625 } })"));
+
+    EXPECT(descriptionsMatch(R"(
+        def matches($name; $default; $current):
+            ([.[] | select(.name == $name)] |
+                length == 1 and
+                .[0].default == $default and
+                .[0].current == $current);
+
+        matches("general:border_size"; 1; 7) and
+        matches("general:snap:enabled"; false; false) and
+        matches("master:new_status"; "slave"; "inherit") and
+        matches("scrolling:follow_min_visible"; 0.4; 0.625)
+    )"),
+           true);
+
+    OK(getFromSocket("/reload"));
+    EXPECT(descriptionsMatch(CONFIGURED_DESCRIPTION_VALUES), true);
 }
 
 TEST_CASE(hyprctlBindsJson) {
-    EXPECT(getFromSocket("/eval hl.bind('SUPER + F12', hl.dsp.exec_cmd('true'), { description = 'hyprctl binds JSON regression', allow_input_capture = false })"), "ok");
+    EXPECT(getFromSocket("/eval hl.bind('SUPER + F12', hl.dsp.exec_cmd('true'), { description = 'hyprctl binds JSON regression', locked = true, repeating = true, "
+                         "allow_input_capture = false })"),
+           "ok");
 
     CProcess jqProc("bash", {"-c", R"(hyprctl -j binds | jq -e '
         type == "array" and
@@ -186,10 +371,99 @@ TEST_CASE(hyprctlBindsJson) {
     jqProc.runSync();
     EXPECT(jqProc.exitCode(), 0);
 
+    const auto BINDS    = getFromSocket("/binds");
+    const auto DESC_POS = BINDS.find("description: hyprctl binds JSON regression");
+    EXPECT(DESC_POS != std::string::npos, true);
+    if (DESC_POS != std::string::npos) {
+        const auto BIND_POS = BINDS.rfind("bind\n", DESC_POS);
+        EXPECT(BIND_POS != std::string::npos, true);
+        if (BIND_POS != std::string::npos) {
+            const auto BLOCK = BINDS.substr(BIND_POS, DESC_POS - BIND_POS);
+            EXPECT(BLOCK.contains("\tflags: locked, repeat\n"), true);
+        }
+    }
+
     EXPECT(getFromSocket("/eval hl.unbind('SUPER + F12')"), "ok");
+}
+
+TEST_CASE(hyprctlWorkspaceJson) {
+    static constexpr auto WORKSPACE_ID      = 4201;
+    static constexpr auto WORKSPACE_NAME    = "hyprctl_workspace_json";
+    static constexpr auto SPECIAL_WORKSPACE = "hyprctl_workspace_json_special";
+
+    CScopeGuard           guard = {[&]() {
+        if (getFromSocket("/monitors").contains(std::format("(special:{})", SPECIAL_WORKSPACE)))
+            getFromSocket(std::format("/dispatch hl.dsp.workspace.toggle_special('{}')", SPECIAL_WORKSPACE));
+        getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })");
+    }};
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-2' })"));
+    OK(getFromSocket(std::format("/dispatch hl.dsp.focus({{ workspace = '{}' }})", WORKSPACE_ID)));
+    OK(getFromSocket(std::format("/dispatch hl.dsp.workspace.rename({{ workspace = '{}', name = '{}' }})", WORKSPACE_ID, WORKSPACE_NAME)));
+    OK(getFromSocket(std::format("/dispatch hl.dsp.focus({{ workspace = 'special:{}' }})", SPECIAL_WORKSPACE)));
+
+    EXPECT(hyprctlJsonMatches("monitors",
+                              std::format(R"(
+        type == "array" and
+        any(.[];
+            .name == "HEADLESS-2" and
+            (.activeWorkspace |
+                (.id | type) == "number" and
+                .id == {} and
+                (.name | type) == "string" and
+                .name == "{}" and
+                (.type | type) == "string" and
+                .type == "normal"
+            ) and
+            (.specialWorkspace |
+                has("id") == false and
+                (.name | type) == "string" and
+                .name == "special:{}" and
+                (.type | type) == "string" and
+                .type == "special"
+            )
+        )
+    )",
+                                          WORKSPACE_ID, WORKSPACE_NAME, SPECIAL_WORKSPACE)),
+           true);
+
+    EXPECT(hyprctlJsonMatches("workspaces",
+                              std::format(R"(
+        type == "array" and
+        any(.[];
+            (.id | type) == "number" and
+            .id == {} and
+            (.name | type) == "string" and
+            .name == "{}" and
+            (.type | type) == "string" and
+            .type == "normal"
+        ) and
+        any(.[];
+            has("id") == false and
+            (.name | type) == "string" and
+            .name == "special:{}" and
+            (.type | type) == "string" and
+            .type == "special"
+        )
+    )",
+                                          WORKSPACE_ID, WORKSPACE_NAME, SPECIAL_WORKSPACE)),
+           true);
 }
 
 TEST_CASE(hyprctlREPL) {
     EXPECT(getCommandStdOut("hyprctl repl 'print(type(hl))'"), "table");
     EXPECT(getCommandStdOut("hyprctl eval 'print(type(hl))'"), "ok");
+}
+
+TEST_CASE(hyprctlBatch) {
+    const auto command  = R"([[BATCH]] activewindow; repl local i = 42\; print(i, "hello\\nworld ]"); clients)";
+    const auto expected = R"(Invalid
+
+
+42	hello
+world ]
+
+
+no open windows)";
+    EXPECT(getFromSocket(command), expected);
 }

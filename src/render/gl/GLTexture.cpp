@@ -14,7 +14,7 @@ CGLTexture::CGLTexture(bool opaque) {
 }
 
 CGLTexture::~CGLTexture() {
-    if (!g_pCompositor || g_pCompositor->m_isShuttingDown || !g_pHyprRenderer)
+    if (!g_pCompositor || g_pCompositor->m_isShuttingDown || !g_pHyprRenderer || !g_pHyprOpenGL)
         return;
 
     g_pHyprOpenGL->makeEGLCurrent();
@@ -68,21 +68,20 @@ CGLTexture::CGLTexture(uint32_t drmFormat, uint8_t* pixels, uint32_t stride, con
 CGLTexture::CGLTexture(const Aquamarine::SDMABUFAttrs& attrs, void* image, bool opaque) {
     m_opaque = opaque;
     if (!g_pHyprOpenGL->m_proc.glEGLImageTargetTexture2DOES) {
-        Log::logger->log(Log::ERR, "Cannot create a dmabuf texture: no glEGLImageTargetTexture2DOES");
+        LOG(Log::ERR, "Cannot create a dmabuf texture: no glEGLImageTargetTexture2DOES");
         return;
     }
 
-    m_opaque = isDrmFormatOpaque(attrs.format);
+    m_opaque = NFormatUtils::isFormatOpaque(attrs.format);
 
-    // #TODO external only formats should be external as well.
-    // also needs a separate color shader.
-    /*if (NFormatUtils::isFormatYUV(attrs.format)) {
+    // YUV has to be sampled externally for the driver to convert it to RGB
+    if (NFormatUtils::isFormatYUV(attrs.format)) {
         m_target = GL_TEXTURE_EXTERNAL_OES;
         m_type   = TEXTURE_EXTERNAL;
-    } else {*/
-    m_target = GL_TEXTURE_2D;
-    m_type   = isDrmFormatOpaque(attrs.format) ? TEXTURE_RGBX : TEXTURE_RGBA;
-    //}
+    } else {
+        m_target = GL_TEXTURE_2D;
+        m_type   = m_opaque ? TEXTURE_RGBX : TEXTURE_RGBA;
+    }
 
     allocate(attrs.size, attrs.format);
     m_eglImage = image;

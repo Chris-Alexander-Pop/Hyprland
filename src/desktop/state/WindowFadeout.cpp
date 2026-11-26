@@ -1,17 +1,20 @@
 #include "WindowFadeout.hpp"
 #include "WindowState.hpp"
-#include "../view/Window.hpp"
-#include "../Workspace.hpp"
+#include "../view/window/Window.hpp"
+#include "../view/window/WindowPresentation.hpp"
+#include "../../workspace/HLWorkspace.hpp"
 #include "../../config/ConfigValue.hpp"
 #include "../../config/shared/animation/AnimationTree.hpp"
 #include "../../animation/AnimationManager.hpp"
 #include "../../managers/fullscreen/FullscreenController.hpp"
 #include "../../output/Monitor.hpp"
+#include "../../output/MonitorWindowTransaction.hpp"
 #include "../../render/Framebuffer.hpp"
 #include "../../render/Renderer.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 using namespace Desktop;
 using namespace Desktop::View;
@@ -23,11 +26,11 @@ static int windowZIndex(PHLWINDOW window) {
 }
 
 static bool shouldBlurWindow(PHLWINDOW window) {
-    static auto PBLUR = CConfigValue<Config::INTEGER>("decoration:blur:enabled");
+    static auto PBLUR = CConfigValue<Config::BOOL>("decoration:blur:enabled");
     if (!*PBLUR)
         return false;
 
-    if (window->m_ruleApplicator->noBlur().valueOrDefault() || window->m_ruleApplicator->RGBX().valueOrDefault() || window->opaque())
+    if (window->m_ruleApplicator->noBlur().valueOrDefault() || window->m_ruleApplicator->RGBX().valueOrDefault() || window->presentation().opaque())
         return false;
 
     auto surface = window->wlSurface();
@@ -48,37 +51,51 @@ static void damageWeakFadeout(WP<T> fadeout) {
         damageFadeoutMonitor(FADEOUT->monitor());
 }
 
-SP<CWindowFadeout> CWindowFadeout::create(PHLWINDOW window, SP<Render::IFramebuffer> snapshot, float sourceAlpha) {
-    if (!window || !snapshot)
+SP<CWindowFadeout> CWindowFadeout::create(PHLWINDOW window, SP<Render::IFramebuffer> snapshot, float sourceAlpha, SP<Render::IFramebuffer> workspaceSnapshot) {
+    static auto PBLURXRAY = CConfigValue<Config::BOOL>("decoration:blur:xray");
+
+    if (!window || (!snapshot && !workspaceSnapshot))
         return nullptr;
 
     const auto MONITOR = window->m_monitor.lock();
     if (!MONITOR)
         return nullptr;
 
-    auto fadeout           = SP<CWindowFadeout>(new CWindowFadeout());
-    fadeout->m_monitor     = MONITOR;
-    fadeout->m_workspace   = window->m_workspace;
-    fadeout->m_framebuffer = snapshot;
-    fadeout->m_zIndex      = windowZIndex(window);
-    fadeout->m_sourcePos   = window->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT) - MONITOR->m_position;
-    fadeout->m_sourceSize  = window->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+    auto fadeout                    = SP<CWindowFadeout>(new CWindowFadeout());
+    fadeout->m_monitor              = MONITOR;
+    fadeout->m_workspace            = window->m_workspace;
+    fadeout->m_framebuffer          = snapshot;
+    fadeout->m_workspaceFramebuffer = workspaceSnapshot;
+    fadeout->m_zIndex               = windowZIndex(window);
+    fadeout->m_sourcePos            = window->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT) - MONITOR->m_position;
+    fadeout->m_sourceSize           = window->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+    fadeout->m_source               = {
+        .type          = eFadeoutSource::WINDOW,
+        .workspace     = window->m_workspace,
+        .pinned        = window->isFloating() && (window->m_state & WINDOW_STATE_PINNED),
+        .noScreenShare = window->m_ruleApplicator->noScreenShare().valueOrDefault(),
+    };
     const bool OVERFULLSCREEN =
-        window->m_isFloating && window->shouldRenderOverFullscreen() && window->m_workspace && Fullscreen::controller()->hasFullscreen(window->m_workspace, true);
-    fadeout->m_plane         = !window->m_isFloating ? FADEOUT_PLANE_WINDOW_TILED : (OVERFULLSCREEN ? FADEOUT_PLANE_WINDOW_OVER_FULLSCREEN : FADEOUT_PLANE_WINDOW_FLOATING);
-    fadeout->m_rounding      = window->rounding();
-    fadeout->m_roundingPower = window->roundingPower();
+        window->isFloating() && window->shouldRenderOverFullscreen() && window->m_workspace && Fullscreen::controller()->hasFullscreen(window->m_workspace, true);
+    fadeout->m_plane         = !window->isFloating() ? FADEOUT_PLANE_WINDOW_TILED : (OVERFULLSCREEN ? FADEOUT_PLANE_WINDOW_OVER_FULLSCREEN : FADEOUT_PLANE_WINDOW_FLOATING);
+    fadeout->m_rounding      = window->presentation().rounding();
+    fadeout->m_roundingPower = window->presentation().roundingPower();
     fadeout->m_blur          = shouldBlurWindow(window);
-    fadeout->m_blurXray      = window->m_ruleApplicator->xray().valueOr(false);
+    fadeout->m_blurXray      = window->m_ruleApplicator->xray().valueOr(*PBLURXRAY != 0);
 
     static auto PDIMAROUND = CConfigValue<Config::FLOAT>("decoration:dim_around");
     if (*PDIMAROUND && window->m_ruleApplicator->dimAround().valueOrDefault())
         fadeout->m_effects.dimAroundAlpha = *PDIMAROUND;
 
-    const auto ANIMCTX = window->m_animationController.animateOut();
+    const auto ANIMCTX        = window->presentation().animateOut();
+    fadeout->m_animationGoal  = CBox{ANIMCTX.pos.to, ANIMCTX.size.to};
+    fadeout->m_noAnim         = window->m_ruleApplicator->noAnim().valueOrDefault();
+    fadeout->m_noGeometryAnim = window->backend().traits().suggestsNoBorder;
 
-    Animation::mgr()->createAnimation(ANIMCTX.pos.from, fadeout->m_realPosition, Config::animationTree()->getAnimationPropertyConfig("windowsOut"), AVARDAMAGE_NONE);
-    Animation::mgr()->createAnimation(ANIMCTX.size.from, fadeout->m_realSize, Config::animationTree()->getAnimationPropertyConfig("windowsOut"), AVARDAMAGE_NONE);
+    Animation::mgr()->createAnimation(window->position(IGeometric::GEOMETRIC_CURRENT), fadeout->m_realPosition, Config::animationTree()->getAnimationPropertyConfig("windowsOut"),
+                                      AVARDAMAGE_NONE);
+    Animation::mgr()->createAnimation(window->size(IGeometric::GEOMETRIC_CURRENT), fadeout->m_realSize, Config::animationTree()->getAnimationPropertyConfig("windowsOut"),
+                                      AVARDAMAGE_NONE);
     Animation::mgr()->createAnimation(sourceAlpha, fadeout->m_alpha, Config::animationTree()->getAnimationPropertyConfig("fadeOut"), AVARDAMAGE_NONE);
 
     const WP<CWindowFadeout> WEAK = fadeout;
@@ -86,20 +103,41 @@ SP<CWindowFadeout> CWindowFadeout::create(PHLWINDOW window, SP<Render::IFramebuf
     fadeout->m_realSize->setUpdateCallback([WEAK](auto) { damageWeakFadeout(WEAK); });
     fadeout->m_alpha->setUpdateCallback([WEAK](auto) { damageWeakFadeout(WEAK); });
 
-    fadeout->m_realPosition->setValueAndWarp(ANIMCTX.pos.from);
-    fadeout->m_realSize->setValueAndWarp(ANIMCTX.size.from);
-    fadeout->m_alpha->setValueAndWarp(sourceAlpha);
+    if (!window->isFloating() && MONITOR->m_windowTransaction && MONITOR->m_windowTransaction->holdClosingWindow(fadeout))
+        return fadeout;
 
-    *fadeout->m_realPosition = ANIMCTX.pos.to;
-    *fadeout->m_realSize     = ANIMCTX.size.to;
-    *fadeout->m_alpha        = ANIMCTX.alpha.to;
-
-    if (window->m_X11DoesntWantBorders) {
-        fadeout->m_realPosition->warp();
-        fadeout->m_realSize->warp();
-    }
+    fadeout->startAnimation();
 
     return fadeout;
+}
+
+void CWindowFadeout::startAnimation() {
+    const auto GOAL = std::exchange(m_animationGoal, std::nullopt);
+    if (!GOAL)
+        return;
+
+    *m_realPosition = GOAL->pos();
+    *m_realSize     = GOAL->size();
+    *m_alpha        = 0.F;
+
+    // Publication happens after the animation tick: disabled channels must not
+    // leave the old snapshot over the replacement geometry for another frame.
+    static auto PANIMATIONS = CConfigValue<Config::INTEGER>("animations:enabled");
+    if (m_noAnim || !*PANIMATIONS || m_noGeometryAnim || !m_realPosition->enabled())
+        m_realPosition->warp();
+    if (m_noAnim || !*PANIMATIONS || m_noGeometryAnim || !m_realSize->enabled())
+        m_realSize->warp();
+    if (m_noAnim || !*PANIMATIONS || !m_alpha->enabled())
+        m_alpha->warp();
+    damageFadeoutMonitor(m_monitor);
+}
+
+void CWindowFadeout::discard() {
+    m_animationGoal.reset();
+    m_alpha->setValueAndWarp(0.F);
+    m_realPosition->warp();
+    m_realSize->warp();
+    damageFadeoutMonitor(m_monitor);
 }
 
 PHLMONITORREF CWindowFadeout::monitor() const {
@@ -131,7 +169,7 @@ float CWindowFadeout::alpha() const {
 }
 
 bool CWindowFadeout::done() const {
-    return m_alpha->value() == 0.F && !m_alpha->isBeingAnimated() && !m_realPosition->isBeingAnimated() && !m_realSize->isBeingAnimated();
+    return !m_animationGoal && m_alpha->value() == 0.F && !m_alpha->isBeingAnimated() && !m_realPosition->isBeingAnimated() && !m_realSize->isBeingAnimated();
 }
 
 SFadeoutRenderEffects CWindowFadeout::effects() const {
@@ -142,7 +180,7 @@ SFadeoutRenderEffects CWindowFadeout::effects() const {
     if (m_blur && MONITOR) {
         effects.preBlur = SFadeoutPreBlur{
             .box           = CBox{m_realPosition->value(), m_realSize->value()}.translate(-MONITOR->m_position).scale(MONITOR->m_scale).round(),
-            .round         = m_rounding,
+            .round         = m_rounding * MONITOR->m_scale,
             .roundingPower = m_roundingPower,
             .xray          = m_blurXray,
             .alpha         = std::sqrt(std::max(alpha(), 0.F)),

@@ -28,7 +28,7 @@ CExecutor::CExecutor() {
         m_isLaunchingExecOnce = true;
 
         // update dbus env
-        if (g_pCompositor->m_aqBackend->hasSession())
+        if (g_pCompositor->shouldManageSdEnv())
             spawnRaw(
 #ifdef USES_SYSTEMD
                 "systemctl --user import-environment DISPLAY WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP QT_QPA_PLATFORMTHEME PATH XDG_DATA_DIRS && hash "
@@ -68,7 +68,7 @@ void CExecutor::applyRuleToProc(SP<Desktop::Rule::CWindowRule> rule, int64_t pid
     rule->registerMatch(Desktop::Rule::RULE_PROP_EXEC_TOKEN, token);
     rule->registerMatch(Desktop::Rule::RULE_PROP_EXEC_PID, std::to_string(pid));
     Desktop::Rule::ruleEngine()->registerRule(std::move(rule));
-    Log::logger->log(Log::DEBUG, "Applied rule arguments for exec, pid {}.", pid);
+    LOG(Log::DEBUG, "Applied rule arguments for exec, pid {}.", pid);
 }
 
 void CExecutor::addExecOnce(SExecRequest&& cmd) {
@@ -118,7 +118,7 @@ std::optional<uint64_t> CExecutor::spawnWithRules(std::string args, PHLWORKSPACE
     if (!RULES.empty()) {
         auto builtRule = Desktop::Rule::CWindowRule::buildFromExecString(std::move(RULES));
         if (!builtRule) {
-            Log::logger->log(Log::ERR, "Failed to parse exec rule: {}", builtRule.error());
+            LOG(Log::ERR, "Failed to parse exec rule: {}", builtRule.error());
             return std::nullopt;
         }
 
@@ -163,19 +163,21 @@ std::vector<std::pair<std::string, std::string>> CExecutor::getHyprlandLaunchEnv
     }
 
     const auto TIMEOUT = (*PINITIALWSTRACKING == 2) ? std::chrono::seconds(std::chrono::months(1337)) : std::chrono::seconds(*PINITIALWSTRACKINGTIMEOUT);
-    result.emplace_back("HL_INITIAL_WORKSPACE_TOKEN", g_pTokenManager->registerNewToken(Desktop::View::SInitialWorkspaceToken{{}, pInitialWorkspace->getConfigName()}, TIMEOUT));
+    result.emplace_back("HL_INITIAL_WORKSPACE_TOKEN",
+                        g_pTokenManager->registerNewToken(
+                            Desktop::View::SInitialWorkspaceToken{{}, pInitialWorkspace->id(), pInitialWorkspace->addressableName(), pInitialWorkspace->type()}, TIMEOUT));
 
     return result;
 }
 
 std::optional<uint64_t> CExecutor::spawnRawProc(const std::string& args, PHLWORKSPACE pInitialWorkspace, const std::string& execRuleToken) {
-    Log::logger->log(Log::DEBUG, "[executor] Executing {}", args);
+    LOG(Log::DEBUG, "[executor] Executing {}", args);
 
     const auto HLENV = getHyprlandLaunchEnv(pInitialWorkspace);
 
     pid_t      child = fork();
     if (child < 0) {
-        Log::logger->log(Log::DEBUG, "Fail to fork");
+        LOG(Log::DEBUG, "Fail to fork");
         return std::nullopt;
     }
     if (child == 0) {
@@ -207,7 +209,7 @@ std::optional<uint64_t> CExecutor::spawnRawProc(const std::string& args, PHLWORK
     }
     // run in parent
 
-    Log::logger->log(Log::DEBUG, "[executor] Process created with pid {}", child);
+    LOG(Log::DEBUG, "[executor] Process created with pid {}", child);
 
     return child;
 }

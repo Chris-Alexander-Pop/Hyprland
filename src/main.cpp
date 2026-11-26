@@ -1,9 +1,10 @@
 #include "defines.hpp"
+#include "helpers/MiscFunctions.hpp"
 #include "debug/log/Logger.hpp"
 #include "Compositor.hpp"
 #include "config/ConfigManager.hpp"
 #include "init/initHelpers.hpp"
-#include "debug/HyprCtl.hpp"
+#include "ipc/s1/S1.hpp"
 #include "helpers/env/Env.hpp"
 
 #include <csignal>
@@ -15,7 +16,6 @@ using namespace Hyprutils::String;
 using namespace Hyprutils::Memory;
 
 #include <fcntl.h>
-#include <iostream>
 #include <iterator>
 #include <vector>
 #include <stdexcept>
@@ -53,9 +53,6 @@ static void reapZombieChildrenAutomatically() {
 }
 
 int main(int argc, char** argv) {
-
-    if (!getenv("XDG_RUNTIME_DIR"))
-        throwError("XDG_RUNTIME_DIR is not set!");
 
     // export HYPRLAND_CMD
     std::string cmd = argv[0];
@@ -139,7 +136,7 @@ int main(int argc, char** argv) {
                     return 1;
                 }
 
-                Log::logger->log(Log::DEBUG, "User-specified config location: '{}'", configPath);
+                LOG(Log::DEBUG, "User-specified config location: '{}'", configPath);
 
                 it++;
 
@@ -149,13 +146,13 @@ int main(int argc, char** argv) {
 
                 return 0;
             } else if (value == "-v" || value == "--version") {
-                std::println("{}", versionRequest(eHyprCtlOutputFormat::FORMAT_NORMAL, ""));
+                std::println("{}", IPC::Socket1::version(IPC::Socket1::eOutputFormat::FORMAT_NORMAL));
                 return 0;
             } else if (value == "--version-json") {
-                std::println("{}", versionRequest(eHyprCtlOutputFormat::FORMAT_JSON, ""));
+                std::println("{}", IPC::Socket1::version(IPC::Socket1::eOutputFormat::FORMAT_JSON));
                 return 0;
             } else if (value == "--systeminfo") {
-                std::println("{}", systemInfoRequest(eHyprCtlOutputFormat::FORMAT_NORMAL, ""));
+                std::println("{}", IPC::Socket1::systemInfo(IPC::Socket1::eOutputFormat::FORMAT_NORMAL));
                 return 0;
             } else if (value == "--verify-config") {
                 verifyConfig = true;
@@ -201,6 +198,11 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (auto env = getenv("XDG_RUNTIME_DIR"); !env || env[0] == '\0') {
+        std::println(stderr, "[ ERROR ] XDG_RUNTIME_DIR is not set. Make sure you're running on a real, properly set up user.");
+        return 1;
+    }
+
     if (!ignoreSudo && NInit::isSudo()) {
         std::println(stderr,
                      "[ ERROR ] Hyprland was launched with superuser privileges, but the privileges check is not omitted.\n"
@@ -221,41 +223,41 @@ int main(int argc, char** argv) {
     if (!verifyConfig) {
         std::println("Welcome to Hyprland!");
         std::println(R"#(
-                                                  
-                     YY    UJ                     
-                    YYY    UUJ                    
-                   XXXY    UUUU                   
-                  zXXXX    UUUUU                  
-                zzzzX        UUUUJ                
-               cczzz          UUUUJ               
-             vccccz            UUUUUJ             
-            vvcccc              UUUUUJ            
-           vvvvv                  UUUUJ           
-          uuuvv                    UUUUJ          
-         uuuuu                      UUUUU         
-        nnnuu                        UUUUU        
-       nnnnn                          YUUUU       
-       xxnn                            YUUU       
-       xxxn                            YYUU       
-      xxxx                              YYUU      
-      rxxx                              YYYY      
-      rrrx                              YYYY      
-       rrrx                            XXXY       
-       rrrr                            XXXX       
-        rrrr                          zzXX        
-         rrrr                        zzzz         
-          rrrrr                    ccczz          
-           rrrrrx                vccccc           
-             rrrrxxxx        uuvvvvvc             
-                rrxxxxxxnnnnuuuuuv                
-                    xxxxxnnnnu                    
+
+                     YY    UJ
+                    YYY    UUJ
+                   XXXY    UUUU
+                  zXXXX    UUUUU
+                zzzzX        UUUUJ
+               cczzz          UUUUJ
+             vccccz            UUUUUJ
+            vvcccc              UUUUUJ
+           vvvvv                  UUUUJ
+          uuuvv                    UUUUJ
+         uuuuu                      UUUUU
+        nnnuu                        UUUUU
+       nnnnn                          YUUUU
+       xxnn                            YUUU
+       xxxn                            YYUU
+      xxxx                              YYUU
+      rxxx                              YYYY
+      rrrx                              YYYY
+       rrrx                            XXXY
+       rrrr                            XXXX
+        rrrr                          zzXX
+         rrrr                        zzzz
+          rrrrr                    ccczz
+           rrrrrx                vccccc
+             rrrrxxxx        uuvvvvvc
+                rrxxxxxxnnnnuuuuuv
+                    xxxxxnnnnu
 
 
 )#");
     }
-
+#if defined(__linux__)
     NInit::lowerAmbientCaps();
-
+#endif
     // let's init the compositor.
     // it initializes basic Wayland stuff in the constructor.
     try {
@@ -281,7 +283,7 @@ int main(int argc, char** argv) {
     }
 
     if (!watchdogOk && !verifyConfig)
-        Log::logger->log(Log::WARN, "WARNING: Hyprland is being launched without start-hyprland. This is highly advised against.");
+        LOG(Log::WARN, "WARNING: Hyprland is being launched without start-hyprland. This is highly advised against.");
 
     g_pCompositor->initServer(socketName, socketFd);
 
@@ -291,7 +293,7 @@ int main(int argc, char** argv) {
         return !verify;
     }
 
-    Log::logger->log(Log::DEBUG, "Hyprland init finished.");
+    LOG(Log::DEBUG, "Hyprland init finished.");
 
     // If all's good to go, start.
     g_pCompositor->startCompositor();
@@ -300,7 +302,7 @@ int main(int argc, char** argv) {
 
     g_pCompositor.reset();
 
-    Log::logger->log(Log::DEBUG, "Hyprland has reached the end.");
+    LOG(Log::DEBUG, "Hyprland has reached the end.");
 
     return EXIT_SUCCESS;
 }

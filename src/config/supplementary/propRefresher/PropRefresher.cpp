@@ -1,4 +1,5 @@
 #include "PropRefresher.hpp"
+#include "../../../desktop/view/window/WindowPresentation.hpp"
 
 #include "../../../managers/eventLoop/EventLoopManager.hpp"
 #include "../../../managers/input/InputManager.hpp"
@@ -17,6 +18,7 @@
 #include "../../shared/monitor/MonitorRuleManager.hpp"
 #include "../../shared/inotify/ConfigWatcher.hpp"
 #include "../../../event/EventBus.hpp"
+#include <algorithm>
 
 using namespace Config;
 using namespace Config::Supplementary;
@@ -54,7 +56,8 @@ int CPropRefresher::executeScheduledRefreshImmediately() {
 
 void CPropRefresher::refreshProp(const bool execdAsScheduled) {
 
-    static auto PZOOMFACTOR = CConfigValue<Config::FLOAT>("cursor:zoom_factor");
+    static auto PZOOMFACTOR  = CConfigValue<Config::FLOAT>("cursor:zoom_factor");
+    static auto PBLURENABLED = CConfigValue<Config::BOOL>("decoration:blur:enabled");
 
     if (m_propsTripped & REFRESH_INPUT_DEVICES) {
         g_pInputManager->setKeyboardLayout();     // update kb layout
@@ -70,19 +73,24 @@ void CPropRefresher::refreshProp(const bool execdAsScheduled) {
             if (!m)
                 continue;
 
-            m->m_forceFullFrames = 2;
-            m->scheduleFrame();
+            g_pHyprRenderer->damageMonitor(m);
         }
     }
 
     if (m_propsTripped & REFRESH_BLUR_FB) {
+        g_pHyprRenderer->refreshBlurProvider();
+
         for (auto const& m : State::monitorState()->monitors()) {
-            if (!m)
+            if (!m || m->m_transformedSize.x <= 0 || m->m_transformedSize.y <= 0)
                 continue;
 
-            m->m_blurFBDirty     = true;
-            m->m_forceFullFrames = 2;
-            m->scheduleFrame();
+            m->resources()->refreshBlurFB();
+
+            if (*PBLURENABLED) {
+                m->m_blurFBDirty     = true;
+                m->m_forceFullFrames = std::max(m->m_forceFullFrames, 2);
+                m->scheduleFrame();
+            }
         }
     }
 
@@ -90,9 +98,9 @@ void CPropRefresher::refreshProp(const bool execdAsScheduled) {
         Desktop::Rule::ruleEngine()->updateAllRules();
 
         for (auto const& w : Desktop::windowState()->windows())
-            w->uncacheWindowDecos();
+            w->presentation().uncacheDecorations();
 
-        for (const auto& ws : State::workspaceState()->workspaces()) {
+        for (const auto& ws : State::Workspace::state()->workspaces()) {
             if (!ws)
                 continue;
 
@@ -107,7 +115,7 @@ void CPropRefresher::refreshProp(const bool execdAsScheduled) {
             if (!m)
                 continue;
 
-            m->m_forceFullFrames = 2;
+            m->m_forceFullFrames = std::max(m->m_forceFullFrames, 2);
             g_pHyprRenderer->damageMonitor(m);
             m->scheduleFrame();
         }
@@ -124,8 +132,8 @@ void CPropRefresher::refreshProp(const bool execdAsScheduled) {
             g_layoutManager->recalculateMonitor(m);
         }
 
-        State::workspacePlacementController()->ensurePersistentWorkspacesPresent(
-            nullptr, [](PHLWORKSPACE ws, PHLMONITOR mon, bool noWarp) { State::workspacePlacementController()->moveWorkspaceToMonitor(ws, mon, noWarp); });
+        State::Workspace::placementController()->ensurePersistentWorkspacesPresent(
+            nullptr, [](PHLWORKSPACE ws, PHLMONITOR mon, bool noWarp) { State::Workspace::placementController()->moveWorkspaceToMonitor(ws, mon, noWarp); });
     }
 
     if (m_propsTripped & REFRESH_LAYOUTS) {
@@ -140,8 +148,7 @@ void CPropRefresher::refreshProp(const bool execdAsScheduled) {
     if (m_propsTripped & REFRESH_CURSOR_ZOOMS) {
         for (auto const& m : State::monitorState()->monitors()) {
             *(m->m_cursorZoom) = *PZOOMFACTOR;
-            if (m->m_activeWorkspace)
-                m->m_activeWorkspace->m_space->recalculate();
+            g_pHyprRenderer->damageMonitor(m);
         }
     }
 

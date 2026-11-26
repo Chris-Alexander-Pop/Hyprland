@@ -7,8 +7,11 @@
 #include "../rule/layerRule/LayerRuleApplicator.hpp"
 #include "../../helpers/AnimatedVariable.hpp"
 #include "../../render/Framebuffer.hpp"
+#include "../../macros/Enums.hpp"
 #include "types/GeometricMovableAnimated.hpp"
 #include "types/AlphaModifiable.hpp"
+#include "surfaceTree/PopupOwner.hpp"
+#include "surfaceTree/SubsurfaceOwner.hpp"
 #include "animationControllers/LayerSurfaceAnimationController.hpp"
 
 class CLayerShellResource;
@@ -21,7 +24,21 @@ namespace Desktop::View {
         LS_ALPHA_LAST,
     };
 
-    class CLayerSurface : public virtual IView, public virtual CGeometricMovableAnimated, public virtual IAlphaModifiable {
+    enum class eLayerFlags : uint8_t {
+        LAYER_FLAG_NONE = 0,
+        LAYER_FLAG_DEAD = (1 << 0),
+        // is the layer present, or allowed to be, above fullscreen (FSMODE_FULLSCREEN) window
+        LAYER_FLAG_ABOVE_FULLSCREEN = (1 << 1),
+    };
+
+    using enum eLayerFlags;
+    EXPOSE_ENUM_AS_MASK(eLayerFlags, LayerFlags);
+
+    class CLayerSurface : public virtual IView,
+                          public virtual CGeometricMovableAnimated,
+                          public virtual IAlphaModifiable,
+                          public virtual CPopupOwner,
+                          public virtual CSubsurfaceOwner {
       public:
         static PHLLS create(SP<CLayerShellResource>);
         static PHLLS fromView(SP<IView>);
@@ -32,28 +49,29 @@ namespace Desktop::View {
       public:
         virtual ~CLayerSurface();
 
-        virtual eViewType                                   type() const override;
-        virtual bool                                        visible() const override;
-        virtual std::optional<CBox>                         logicalBox() const override;
-        virtual bool                                        desktopComponent() const override;
-        virtual std::optional<CBox>                         surfaceLogicalBox() const override;
-        virtual Types::CMultiAVarContainer<float, uint8_t>& alpha() override;
-        virtual std::optional<uint8_t>                      alphaGenericToKey(eAlphaModifiableProp p) override;
+        virtual eViewType                                         type() const override;
+        virtual bool                                              mapped() const override;
+        virtual bool                                              focusAvailable() const override;
+        virtual std::optional<CBox>                               logicalBox() const override;
+        virtual bool                                              desktopComponent() const override;
+        virtual std::optional<CBox>                               surfaceLogicalBox() const override;
+        virtual Types::CMultiAVarContainer<float, uint8_t>&       alpha() override;
+        virtual const Types::CMultiAVarContainer<float, uint8_t>& alpha() const override;
+        virtual std::optional<uint8_t>                            alphaGenericToKey(eAlphaModifiableProp p) override;
+        virtual bool                                              cantLockCursor() const override;
 
-        int                                                 popupsCount();
+        WP<CLayerShellResource>                                   m_layerSurface;
+        bool                                                      shouldBlur() const;
+        bool                                                      isHiddenByFullscreen(const PHLMONITOR& monitor) const;
 
-        WP<CLayerShellResource>                             m_layerSurface;
+        LayerFlags                                                m_flags = LAYER_FLAG_NONE;
 
         // the header providing the enum type cannot be imported here
-        int                                     m_interactivity = 0;
+        int                                     m_keyboardInteractivity = 0;
 
-        bool                                    m_mapped = false;
-        uint32_t                                m_layer  = 0;
+        uint32_t                                m_layer = 0;
 
         PHLMONITORREF                           m_monitor;
-
-        bool                                    m_noProcess       = false;
-        bool                                    m_aboveFullscreen = true;
 
         UP<Desktop::Rule::CLayerRuleApplicator> m_ruleApplicator;
 
@@ -64,8 +82,6 @@ namespace Desktop::View {
         CBox                                    m_geometry = {0, 0, 0, 0};
         Vector2D                                m_position;
         std::string                             m_namespace = "";
-        SP<Desktop::View::CPopup>               m_popupHead;
-
         pid_t                                   getPID();
         void                                    updateSurfaceScaleTransformDetails();
 
@@ -76,14 +92,18 @@ namespace Desktop::View {
         MONITORID                               monitorID();
 
       private:
+        bool m_mapped = false;
+
         struct {
             CHyprSignalListener destroy;
             CHyprSignalListener map;
             CHyprSignalListener unmap;
             CHyprSignalListener commit;
+            CHyprSignalListener newPopup;
         } m_listeners;
 
         void registerCallbacks();
+        void takeKeyboardFocus();
 
         // fade in/out
         Desktop::Types::CMultiAVarContainer<float, std::underlying_type_t<eLayerAlpha>> m_alpha;
@@ -105,13 +125,13 @@ namespace Desktop::View {
     inline bool validMapped(const PHLLS& l) {
         if (!valid(l))
             return false;
-        return l->aliveAndVisible();
+        return l->mapped();
     }
 
     inline bool validMapped(const PHLLSREF& l) {
         if (!valid(l))
             return false;
-        return l->aliveAndVisible();
+        return l->mapped();
     }
 
 }

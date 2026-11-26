@@ -1,5 +1,9 @@
 #pragma once
 
+namespace Render {
+    class CRenderContext;
+}
+
 #include "../defines.hpp"
 #include "../render/Texture.hpp"
 #include "../helpers/time/Timer.hpp"
@@ -17,7 +21,7 @@ namespace Debug {
 
     class CMonitorOverlay {
       public:
-        int         draw(int offset, bool& cacheUpdated);
+        int         draw(Render::CRenderContext& ctx, int offset, bool& cacheUpdated);
         const CBox& lastDrawnBox() const;
 
         void        renderData(PHLMONITOR pMonitor, float durationUs);
@@ -41,24 +45,24 @@ namespace Debug {
             float var = 0.F;
         };
 
-        void                                           updateLine(size_t idx, const std::string& text, const CHyprColor& color, int fontSize, const std::string& fontFamily);
-        void                                           rebuildCache();
+        void                                  updateLine(size_t idx, const std::string& text, const CHyprColor& color, int fontSize, const std::string& fontFamily);
+        void                                  rebuildCache();
 
-        std::deque<float>                              m_lastFrametimes;
-        std::deque<float>                              m_lastFPSPerSecond;
-        std::deque<float>                              m_lastRenderTimes;
-        std::deque<float>                              m_lastRenderTimesNoOverlay;
-        std::deque<float>                              m_lastAnimationTicks;
-        std::chrono::high_resolution_clock::time_point m_lastFrame;
-        std::chrono::high_resolution_clock::time_point m_fpsSecondStart;
-        size_t                                         m_framesInCurrentSecond = 0;
-        PHLMONITORREF                                  m_monitor;
+        std::deque<float>                     m_lastFrametimes;
+        std::deque<float>                     m_lastFPSPerSecond;
+        std::deque<float>                     m_lastRenderTimes;
+        std::deque<float>                     m_lastRenderTimesNoOverlay;
+        std::deque<float>                     m_lastAnimationTicks;
+        std::chrono::steady_clock::time_point m_lastFrame;
+        std::chrono::steady_clock::time_point m_fpsSecondStart;
+        size_t                                m_framesInCurrentSecond = 0;
+        PHLMONITORREF                         m_monitor;
 
-        std::vector<STextLine>                         m_cachedLines;
-        bool                                           m_cacheValid = false;
-        CTimer                                         m_cacheTimer;
+        std::vector<STextLine>                m_cachedLines;
+        bool                                  m_cacheValid = false;
+        CTimer                                m_cacheTimer;
 
-        CBox                                           m_lastDrawnBox;
+        CBox                                  m_lastDrawnBox;
 
         friend class Render::IHyprRenderer;
     };
@@ -66,7 +70,7 @@ namespace Debug {
     class COverlay {
       public:
         COverlay();
-        void draw();
+        void draw(Render::CRenderContext& ctx);
         void renderData(PHLMONITOR, float durationUs);
         void renderDataNoOverlay(PHLMONITOR, float durationUs);
         void frameData(PHLMONITOR);

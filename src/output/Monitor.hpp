@@ -40,6 +40,8 @@ class CEventLoopTimer;
 namespace Monitor {
     class CMonitorResources;
     class CMonitorFrameScheduler;
+    class COutputCommitCoordinator;
+    class CMonitorWindowTransaction;
     class CMonitor;
 
     class CMonitorState {
@@ -136,6 +138,8 @@ namespace Monitor {
         PHLMONITORREF                  m_self;
 
         UP<CMonitorFrameScheduler>     m_frameScheduler;
+        UP<COutputCommitCoordinator>   m_commitCoordinator;
+        UP<CMonitorWindowTransaction>  m_windowTransaction;
 
         // mirroring
         PHLMONITORREF              m_mirrorOf;
@@ -194,7 +198,7 @@ namespace Monitor {
 
         std::array<std::vector<PHLLSREF>, 4> m_layerSurfaceLayers;
 
-        // keep in sync with HyprCtl
+        // keep in sync with socket1 output
         enum eDSBlockReason : uint16_t {
             DS_OK = 0,
 
@@ -212,10 +216,10 @@ namespace Monitor {
             DS_BLOCK_FAILED    = (1 << 11),
             DS_BLOCK_CM        = (1 << 12),
 
-            DS_CHECKS_COUNT = 14,
+            DS_CHECKS_COUNT = 13,
         };
 
-        // keep in sync with HyprCtl
+        // keep in sync with socket1 output
         enum eSolitaryCheck : uint32_t {
             SC_OK = 0,
 
@@ -241,7 +245,7 @@ namespace Monitor {
             SC_CHECKS_COUNT = 18,
         };
 
-        // keep in sync with HyprCtl
+        // keep in sync with socket1 output
         enum eTearingCheck : uint8_t {
             TC_OK = 0,
 
@@ -270,12 +274,8 @@ namespace Monitor {
         bool         isMirror();
         float        getDefaultScale();
         void         changeWorkspace(const PHLWORKSPACE& pWorkspace, bool internal = false, bool noMouseMove = false, bool noFocus = false);
-        void         changeWorkspace(const WORKSPACEID& id, bool internal = false, bool noMouseMove = false, bool noFocus = false);
-        void         setSpecialWorkspace(const PHLWORKSPACE& pWorkspace);
-        void         setSpecialWorkspace(const WORKSPACEID& id);
+        void         setSpecialWorkspace(const PHLWORKSPACE& pWorkspace, bool noFocus = false);
         PHLWORKSPACE getCurrentWorkspace();
-        WORKSPACEID  activeWorkspaceID();
-        WORKSPACEID  activeSpecialWorkspaceID();
         void         scheduleDone();
         uint32_t     isSolitaryBlocked(bool full = false);
         void         recheckSolitary();
@@ -343,9 +343,11 @@ namespace Monitor {
         bool                                                        gammaRampsInUse();
 
         std::optional<NColorManagement::PImageDescription>          getFSImageDescription();
+        std::optional<NColorManagement::PImageDescription>          getAutoHDRImageDescription(const SP<CWLSurfaceResource>& surface);
 
         NColorManagement::SPCPRimaries                              getMasteringPrimaries();
         NColorManagement::SImageDescription::SPCMasteringLuminances getMasteringLuminances();
+        NColorManagement::PImageDescription                         getHDRImageDescription(NCMType::eCMType cmType);
 
         uint32_t                                                    getPreferredReadFormat();
 
@@ -358,7 +360,10 @@ namespace Monitor {
         bool                                m_renderingInitPassed = false;
 
         PHLWINDOWREF                        m_previousFSWindow;
-        bool                                m_needsHDRupdate = false;
+        PHLWINDOWREF                        m_autoHDRWindow;
+        bool                                m_needsHDRupdate         = false;
+        bool                                m_hdrMetadataFromSurface = false;
+        PHLWINDOWREF                        m_hdrMetadataWindow;
 
         std::optional<dev_t>                m_cachedAllocatorDRMDev;
         std::optional<dev_t>                m_cachedCompositorDRMDev;
@@ -385,25 +390,21 @@ namespace Monitor {
         WP<Monitor::CMonitorResources>      resources();
 
       private:
-        void                    updateMatrix();
-        Mat3x3                  m_projMatrix;
-        Mat3x3                  m_projOutputMatrix;
+        void                updateMatrix();
+        Mat3x3              m_projMatrix;
+        Mat3x3              m_projOutputMatrix;
 
-        void                    setupDefaultWS(const Config::CMonitorRule&);
-        WORKSPACEID             findAvailableDefaultWS();
-        void                    setSpecialWorkspaceVisualState(bool active);
-        void                    commitDPMSState(bool state);
-        void                    scheduleModeRetry();
-        void                    clearModeRetry();
-        void                    updateVCGTRamps();
-        bool                    trySetFormat(std::span<const uint32_t> formats);
+        void                setSpecialWorkspaceVisualState(bool active);
+        void                commitDPMSState(bool state);
+        void                scheduleModeRetry();
+        void                clearModeRetry();
+        void                updateVCGTRamps();
+        bool                trySetFormat(std::span<const uint32_t> formats);
 
-        bool                    m_doneScheduled  = false;
-        bool                    m_vcgtRampsSet   = false;
-        int                     m_modeRetryCount = 0;
-        SP<CEventLoopTimer>     m_modeRetryTimer;
-
-        std::stack<WORKSPACEID> m_prevWorkSpaces;
+        bool                m_doneScheduled  = false;
+        bool                m_vcgtRampsSet   = false;
+        int                 m_modeRetryCount = 0;
+        SP<CEventLoopTimer> m_modeRetryTimer;
 
         // Resources
         UP<Monitor::CMonitorResources> m_resources;
@@ -418,6 +419,7 @@ namespace Monitor {
             CHyprSignalListener needsFrame;
             CHyprSignalListener presented;
             CHyprSignalListener commit;
+            CHyprSignalListener commitResult;
         } m_listeners;
 
         int   m_supportsWideColor = 0;

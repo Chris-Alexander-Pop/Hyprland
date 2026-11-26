@@ -11,6 +11,7 @@
 #include "../../../helpers/math/Expression.hpp"
 #include "../../../helpers/TagKeeper.hpp"
 #include "../../../config/shared/complex/ComplexDataTypes.hpp"
+#include "../../../config/shared/complex/CornersData.hpp"
 
 namespace Desktop::Rule {
     class CWindowRule;
@@ -36,6 +37,7 @@ namespace Desktop::Rule {
                                                                                Types::eOverridePriority              prio = Types::PRIORITY_WINDOW_RULE);
         bool                                                        readStaticRules(bool preRead = false);
         void                                                        recheckStaticRules();
+        Config::CCornersData                                        roundingValue() const;
 
         // static props
         struct {
@@ -103,6 +105,8 @@ namespace Desktop::Rule {
         DEFINE_PROP(bool, noFocus, false, WINDOW_RULE_EFFECT_NO_FOCUS)
         DEFINE_PROP(bool, noMaxSize, false, WINDOW_RULE_EFFECT_NO_MAX_SIZE)
         DEFINE_PROP(bool, noShadow, false, WINDOW_RULE_EFFECT_NO_SHADOW)
+        DEFINE_PROP(bool, noGlow, false, WINDOW_RULE_EFFECT_NO_GLOW)
+        DEFINE_PROP(bool, noWobble, false, WINDOW_RULE_EFFECT_NO_WOBBLE)
         DEFINE_PROP(bool, noShortcutsInhibit, false, WINDOW_RULE_EFFECT_NO_SHORTCUTS_INHIBIT)
         DEFINE_PROP(bool, opaque, false, WINDOW_RULE_EFFECT_OPAQUE)
         DEFINE_PROP(bool, dimAround, false, WINDOW_RULE_EFFECT_DIM_AROUND)
@@ -123,7 +127,7 @@ namespace Desktop::Rule {
         DEFINE_PROP(int, idleInhibitMode, false, WINDOW_RULE_EFFECT_IDLE_INHIBIT)
 
         DEFINE_PROP(Config::INTEGER, borderSize, {std::string("general:border_size") COMMA sc<Config::INTEGER>(0) COMMA std::nullopt}, WINDOW_RULE_EFFECT_BORDER_SIZE)
-        DEFINE_PROP(Config::INTEGER, rounding, {std::string("decoration:rounding") COMMA sc<Config::INTEGER>(0) COMMA std::nullopt}, WINDOW_RULE_EFFECT_ROUNDING)
+        DEFINE_PROP(Config::CCornersData, rounding, {}, WINDOW_RULE_EFFECT_ROUNDING)
         DEFINE_PROP(Config::INTEGER, tonemap, 1, WINDOW_RULE_EFFECT_TONEMAP)
 
         DEFINE_PROP(Config::FLOAT, roundingPower, {std::string("decoration:rounding_power")}, WINDOW_RULE_EFFECT_ROUNDING_POWER)

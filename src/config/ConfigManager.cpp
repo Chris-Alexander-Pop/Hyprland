@@ -2,9 +2,13 @@
 #include "supplementary/jeremy/Jeremy.hpp"
 #include "lua/ConfigManager.hpp"
 #include "../debug/log/Logger.hpp"
+#include "values/ConfigValues.hpp"
+#include "../layout/supplementary/WorkspaceAlgoMatcher.hpp"
+#include "../state/workspace/State.hpp"
 
 #include <hyprutils/path/Path.hpp>
 #include <filesystem>
+#include <cstdlib>
 
 using namespace Config;
 
@@ -19,34 +23,45 @@ bool Config::initConfigManager() {
     const auto CFG_PATH = Supplementary::Jeremy::getMainConfigPath();
 
     if (!CFG_PATH) {
-        Log::logger->log(Log::CRIT, "[cfg] Couldn't load config: {}", CFG_PATH.error());
+        LOG(Log::CRIT, "[cfg] Couldn't load config: {}", CFG_PATH.error());
         return false;
     }
 
     std::filesystem::path filePath = CFG_PATH->path;
 
     if (CFG_PATH->type == Supplementary::Jeremy::CONFIG_TYPE_REGULAR) {
-        Log::logger->log(Log::DEBUG, "[cfg] Regular config at {}", filePath.string());
+        LOG(Log::DEBUG, "[cfg] Regular config at {}", filePath.string());
         g_mgr = makeUnique<Lua::CConfigManager>();
     } else {
-        Log::logger->log(Log::DEBUG, "[cfg] Config is either explicit or special");
+        LOG(Log::DEBUG, "[cfg] Config is either explicit or special");
         g_mgr = makeUnique<Lua::CConfigManager>();
     }
 
     RASSERT(g_mgr, "failed to create a suitable config manager");
 
+    // If something exit()s without going through cleanup() (e.g. libseat's forked builtin seatd),
+    // static destruction would destroy us after the singletons our destructor uses.
+    // Making sure they exist before registering this guarantees it runs before they're destroyed.
+    Layout::Supplementary::algoMatcher();
+    State::Workspace::state();
+    std::atexit([] { mgr().reset(); });
+
     std::error_code ec;
     if (!std::filesystem::exists(filePath, ec) || ec) {
         if (ec) {
-            Log::logger->log(Log::CRIT, "[cfg] Couldn't load config: {}", ec.message());
+            LOG(Log::CRIT, "[cfg] Couldn't load config: {}", ec.message());
             return false;
         }
 
         // generate default
         if (const auto v = g_mgr->generateDefaultConfig(filePath); !v) {
-            Log::logger->log(Log::CRIT, "[cfg] Couldn't generate default config: {}", v.error());
+            LOG(Log::CRIT, "[cfg] Couldn't generate default config: {}", v.error());
             return false;
         }
+    }
+
+    for (const auto& v : Values::CONFIG_VALUES) {
+        v->commence();
     }
 
     return true;

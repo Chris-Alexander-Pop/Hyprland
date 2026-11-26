@@ -12,6 +12,7 @@
 #include "./types/IValue.hpp"
 #include "./types/BoolValue.hpp"
 #include "./types/ColorValue.hpp"
+#include "./types/CornersValue.hpp"
 #include "./types/CssGapValue.hpp"
 #include "./types/FloatValue.hpp"
 #include "./types/FontWeightValue.hpp"
@@ -30,24 +31,39 @@ namespace Config::Values {
         };
     }
 
+    // Takes a list of string choices for values.
+    // putting * at the end makes it a prefix.
     inline auto strChoice(std::vector<std::string> rawVec) {
         return [vec = std::move(rawVec)](const Config::STRING& v) -> std::expected<void, std::string> {
-            if (!std::ranges::contains(vec, v)) {
-                std::string allowed = "";
-                for (const auto& e : vec) {
-                    allowed += std::format("\"{}\", ", e);
+            for (const auto& e : vec) {
+                if (e.empty())
+                    continue;
+
+                if (e.back() == '*') {
+                    if (v.starts_with(std::string_view{e}.substr(0, e.length() - 1)))
+                        return {}; // pass
+                    continue;
                 }
 
-                allowed.resize(allowed.size() - 2);
-
-                return std::unexpected(std::format("bad value \"{}\", allowed values are: {}", v, allowed));
+                if (e == v)
+                    return {}; // pass
             }
-            return {};
+
+            // bad input
+            std::string allowed = "";
+            for (const auto& e : vec) {
+                allowed += std::format("\"{}\", ", e);
+            }
+
+            allowed.resize(allowed.size() - 2);
+
+            return std::unexpected(std::format("bad value \"{}\", allowed values are: {}", v, allowed));
         };
     }
 
     using Bool       = CBoolValue;
     using Color      = CColorValue;
+    using Corners    = CCornersValue;
     using CssGap     = CCssGapValue;
     using Float      = CFloatValue;
     using FontWeight = CFontWeightValue;
@@ -67,6 +83,11 @@ namespace Config::Values {
     template <>
     struct SValueOptions<CColorValue> {
         using type = SColorValueOptions;
+    };
+
+    template <>
+    struct SValueOptions<CCornersValue> {
+        using type = SCornersValueOptions;
     };
 
     template <>
@@ -157,6 +178,7 @@ namespace Config::Values {
         "input:touchdevice:output",
         "input:tablet:output",
         "input:touchdevice:enabled",
+        "input:tablet:enabled",
         "input:tablet:region_position",
         "input:tablet:absolute_region_position",
         "input:tablet:region_size",

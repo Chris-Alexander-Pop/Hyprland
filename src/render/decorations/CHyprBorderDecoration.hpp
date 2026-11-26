@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AnimatedDecorationGradient.hpp"
 #include "IHyprWindowDecoration.hpp"
 
 class CHyprBorderDecoration : public IHyprWindowDecoration {
@@ -7,34 +8,50 @@ class CHyprBorderDecoration : public IHyprWindowDecoration {
     CHyprBorderDecoration(PHLWINDOW);
     virtual ~CHyprBorderDecoration() = default;
 
-    virtual SDecorationPositioningInfo getPositioningInfo();
+    virtual SDecorationPositioningInfo getPositioningInfo() override;
 
-    virtual void                       onPositioningReply(const SDecorationPositioningReply& reply);
+    virtual void                       onPositioningReply(const SDecorationPositioningReply& reply) override;
 
-    virtual void                       draw(PHLMONITOR, float const& a);
+    virtual void                       draw(Render::CRenderContext& ctx, PHLMONITOR, float const& a, const Render::SWindowRenderPresentation& presentation) override;
 
-    virtual eDecorationType            getDecorationType();
+    virtual eDecorationType            getDecorationType() override;
 
-    virtual void                       updateWindow(PHLWINDOW);
+    virtual void                       updateWindow(PHLWINDOW) override;
 
-    virtual void                       damageEntire();
+    virtual void                       damageEntire() override;
 
-    virtual eDecorationLayer           getDecorationLayer();
+    virtual eDecorationLayer           getDecorationLayer() override;
 
-    virtual uint64_t                   getDecorationFlags();
+    virtual uint64_t                   getDecorationFlags() override;
 
-    virtual std::string                getDisplayName();
+    virtual std::string                getDisplayName() override;
+
+    virtual void                       initializeAnimations() override;
+    virtual void                       updateState() override;
+    virtual void                       onWindowMap() override;
+    virtual void                       onWindowFocus() override;
+
+    int                                borderSize() const;
+    int                                renderBorderSize() const;
+    double                             borderExtent() const;
+    void                               invalidateBorderSize();
 
   private:
-    SBoxExtents  m_extents;
-    SBoxExtents  m_reportedExtents;
+    SBoxExtents                 m_extents;
+    SBoxExtents                 m_reportedExtents;
 
-    PHLWINDOWREF m_window;
+    PHLWINDOWREF                m_window;
 
-    CBox         m_assignedGeometry = {0};
+    CBox                        m_assignedGeometry = {0};
 
-    int          m_lastBorderSize = -1;
+    double                      m_lastBorderExtent = -1;
+    int                         m_lastBorderSize   = -1;
 
-    CBox         assignedBoxGlobal();
-    bool         doesntWantBorders();
+    CAnimatedDecorationGradient m_gradient;
+    mutable int                 m_cachedBorderSize     = -1;
+    mutable bool                m_borderSizeCacheDirty = true;
+
+    CBox                        assignedBoxGlobal();
+    CBox                        assignedBoxGlobal(const Render::SWindowRenderPresentation& presentation);
+    bool                        doesntWantBorders() const;
 };

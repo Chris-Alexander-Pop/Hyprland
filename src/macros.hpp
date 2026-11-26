@@ -8,6 +8,7 @@
 
 #include "helpers/memory/Memory.hpp"
 #include "debug/log/Logger.hpp"
+#include "debug/crash/CrashReporter.hpp"
 
 #ifndef NDEBUG
 #ifdef HYPRLAND_DEBUG
@@ -19,12 +20,7 @@
 #define ISDEBUG false
 #endif
 
-#define SPECIAL_WORKSPACE_START (-99)
-
 #define STRVAL_EMPTY "[[EMPTY]]"
-
-#define WORKSPACE_INVALID     -1L
-#define WORKSPACE_NOT_CHANGED -101
 
 #define MONITOR_INVALID  -1L
 #define MONITOR_FALLBACK -2L
@@ -45,16 +41,19 @@
 
 template <typename... Args>
 [[gnu::noinline]] [[gnu::cold]] void assertImpl(int line, std::string_view filename, std::format_string<Args...> reason, Args&&... args) {
-    Log::logger->log(Log::CRIT, "\n==========================================================================================\nASSERTION FAILED! \n\n{}\n\nat: line {} in {}",
-                     std::format(reason, std::forward<Args>(args)...), line, filename);
-    std::print("Assertion failed! See the log in /tmp/hypr/hyprland.log for more info.");
+    const auto MSG    = std::format(reason, std::forward<Args>(args)...);
+    const auto REASON = std::format("{} (at line {} in {})", MSG, line, filename);
+    LOG(Log::CRIT, "\n==========================================================================================\nASSERTION FAILED! \n\n{}\n\nat: line {} in {}", MSG, line,
+        filename);
+    CrashReporter::setAssertReason(REASON);
+    std::println(stderr, "Assertion failed: {}", REASON);
     raise(SIGABRT);
 }
 
 #define RASSERT(expr, reason, ...)                                                                                                                                                 \
     if (!(expr)) [[unlikely]] {                                                                                                                                                    \
         constexpr auto FILENAME = std::string_view(__FILE__).substr(std::string_view(__FILE__).find_last_of('/') + 1);                                                             \
-        assertImpl(__LINE__, FILENAME, reason, ##__VA_ARGS__);                                                                                                                     \
+        assertImpl(__LINE__, FILENAME, reason __VA_OPT__(, ) __VA_ARGS__);                                                                                                         \
     }
 
 #define ASSERT(expr) RASSERT(expr, "?")
@@ -88,7 +87,7 @@ template <typename... Args>
 #if ISDEBUG
 #define UNREACHABLE()                                                                                                                                                              \
     {                                                                                                                                                                              \
-        Log::logger->log(Log::CRIT, "\n\nMEMORY CORRUPTED: Unreachable failed! (Reached an unreachable position, memory corruption!!!)");                                          \
+        LOG(Log::CRIT, "\n\nMEMORY CORRUPTED: Unreachable failed! (Reached an unreachable position, memory corruption!!!)");                                                       \
         raise(SIGABRT);                                                                                                                                                            \
         std::unreachable();                                                                                                                                                        \
     }
@@ -101,12 +100,12 @@ template <typename... Args>
 #define GLCALL(__CALL__)                                                                                                                                                           \
     {                                                                                                                                                                              \
         __CALL__;                                                                                                                                                                  \
-        static const auto GLDEBUG = CConfigValue<Config::INTEGER>("debug:gl_debugging");                                                                                           \
+        static const auto GLDEBUG = CConfigValue<Config::BOOL>("debug:gl_debugging");                                                                                              \
         if (*GLDEBUG) {                                                                                                                                                            \
             auto err = glGetError();                                                                                                                                               \
             if (err != GL_NO_ERROR) {                                                                                                                                              \
-                Log::logger->log(Log::ERR, "[GLES] Error in call at {}@{}: 0x{:x}", __LINE__,                                                                                      \
-                                 ([]() consteval { return std::string_view(__FILE__).substr(std::string_view(__FILE__).find_last_of('/') + 1); })(), err);                         \
+                LOG(Log::ERR, "[GLES] Error in call at {}@{}: 0x{:x}", __LINE__,                                                                                                   \
+                    ([]() consteval { return std::string_view(__FILE__).substr(std::string_view(__FILE__).find_last_of('/') + 1); })(), err);                                      \
             }                                                                                                                                                                      \
         }                                                                                                                                                                          \
     }

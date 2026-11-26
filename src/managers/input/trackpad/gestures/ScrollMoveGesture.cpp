@@ -1,7 +1,7 @@
 #include "ScrollMoveGesture.hpp"
 
 #include "../../../../desktop/state/FocusState.hpp"
-#include "../../../../desktop/Workspace.hpp"
+#include "../../../../workspace/HLWorkspace.hpp"
 #include "../../../../output/Monitor.hpp"
 #include "../../../../layout/LayoutManager.hpp"
 #include "../../../../layout/algorithm/Algorithm.hpp"
@@ -24,10 +24,10 @@ static Layout::Tiled::CScrollingAlgorithm* currentScrollingLayout() {
         return nullptr;
 
     const auto PWORKSPACE = PMONITOR->m_activeSpecialWorkspace ? PMONITOR->m_activeSpecialWorkspace : PMONITOR->m_activeWorkspace;
-    if (!PWORKSPACE || !PWORKSPACE->m_space)
+    if (!PWORKSPACE || !PWORKSPACE->space())
         return nullptr;
 
-    const auto ALGORITHM = PWORKSPACE->m_space->algorithm();
+    const auto ALGORITHM = PWORKSPACE->space()->algorithm();
     if (!ALGORITHM || !ALGORITHM->tiledAlgo())
         return nullptr;
 
@@ -92,7 +92,7 @@ void CScrollMoveTrackpadGesture::update(const ITrackpadGesture::STrackpadGesture
             const double INSTANT_VELOCITY = NORMALIZED_OFFSET_DELTA / DT;
 
             if (std::isfinite(INSTANT_VELOCITY))
-                m_velocity = m_velocity * (1.0 - SCROLL_GESTURE_VELOCITY_SMOOTH) + INSTANT_VELOCITY * SCROLL_GESTURE_VELOCITY_SMOOTH;
+                m_velocity = (m_velocity * (1.0 - SCROLL_GESTURE_VELOCITY_SMOOTH)) + (INSTANT_VELOCITY * SCROLL_GESTURE_VELOCITY_SMOOTH);
         }
     }
 

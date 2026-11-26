@@ -1,9 +1,14 @@
 #include <config/lua/bindings/LuaBindingsInternal.hpp>
+#include <config/lua/LuaCaller.hpp>
 #include <config/lua/ConfigManager.hpp>
+#include <config/shared/inotify/ConfigWatcher.hpp>
+#include <managers/input/trackpad/gestures/LuaFunctionGesture.hpp>
 
 #include <Compositor.hpp>
 
 #include <config/lua/types/LuaConfigInt.hpp>
+#include <config/values/types/IntValue.hpp>
+#include <desktop/rule/windowRule/WindowRule.hpp>
 
 #include <gtest/gtest.h>
 
@@ -12,6 +17,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <numbers>
 
 extern "C" {
 #include <lualib.h>
@@ -25,7 +31,8 @@ namespace Config::Lua {
     class CConfigManagerPluginLuaTestAccessor {
       public:
         static void initializeLuaState(CConfigManager& mgr, lua_State* L) {
-            mgr.m_lua = L;
+            mgr.m_lua    = L;
+            mgr.m_caller = makeUnique<CLuaCaller>(L, [&mgr](std::string&& e) { mgr.addError(std::move(e)); });
             lua_pushlightuserdata(L, &mgr);
             lua_setfield(L, LUA_REGISTRYINDEX, "hl_lua_manager");
         }
@@ -91,19 +98,19 @@ namespace {
 
     class CScopedCompositor {
       public:
-        CScopedCompositor() : m_prevCompositor(std::move(g_pCompositor)), m_prevKeybindManager(std::move(g_pKeybindManager)) {
-            g_pCompositor     = makeUnique<CCompositor>(true);
-            g_pKeybindManager = makeUnique<CKeybindManager>();
+        CScopedCompositor() : m_prevCompositor(std::move(g_pCompositor)), m_prevKeybindManager(std::move(Keybinds::mgr())) {
+            g_pCompositor   = makeUnique<CCompositor>(true);
+            Keybinds::mgr() = makeUnique<Keybinds::CKeybindManager>();
         }
 
         ~CScopedCompositor() {
-            g_pKeybindManager = std::move(m_prevKeybindManager);
-            g_pCompositor     = std::move(m_prevCompositor);
+            Keybinds::mgr() = std::move(m_prevKeybindManager);
+            g_pCompositor   = std::move(m_prevCompositor);
         }
 
       private:
-        UP<CCompositor>     m_prevCompositor;
-        UP<CKeybindManager> m_prevKeybindManager;
+        UP<CCompositor>               m_prevCompositor;
+        UP<Keybinds::CKeybindManager> m_prevKeybindManager;
     };
 
     std::string luaString(const std::string& value) {
@@ -127,9 +134,304 @@ namespace {
         return path.lexically_normal().string();
     }
 
+    std::string packagePath(lua_State* L) {
+        lua_getglobal(L, "package");
+        lua_getfield(L, -1, "path");
+
+        std::string path;
+        if (const auto* value = lua_tostring(L, -1); value)
+            path = value;
+
+        lua_pop(L, 2);
+        return path;
+    }
+
     void expectTracked(CConfigManager& mgr, const std::filesystem::path& path) {
         const auto& paths = mgr.getConfigPaths();
         EXPECT_NE(std::ranges::find(paths, normalizedPath(path)), paths.end());
+    }
+}
+
+class CConfigLuaDispatchers : public testing::Test {
+  protected:
+    void SetUp() override {
+        m_previousWatcher = std::move(Config::watcher());
+        Config::watcher() = makeUnique<Config::CConfigWatcher>();
+        m_previousManager = std::move(Config::mgr());
+        Config::mgr()     = makeUnique<CConfigManager>();
+        m_manager         = Config::Lua::mgr();
+        CConfigManagerPluginLuaTestAccessor::initializeOwnedLuaState(*m_manager, m_tmp.path() / "hyprland.lua");
+        m_lua = CConfigManagerPluginLuaTestAccessor::luaState(*m_manager);
+    }
+
+    void TearDown() override {
+        Keybinds::mgr()->clearBinds();
+        Config::mgr()     = std::move(m_previousManager);
+        Config::watcher() = std::move(m_previousWatcher);
+    }
+
+    WP<CConfigManager> m_manager;
+    lua_State*         m_lua = nullptr;
+
+  private:
+    CScopedCompositor          m_compositor;
+    CTempDir                   m_tmp;
+    UP<Config::IConfigManager> m_previousManager;
+    UP<Config::CConfigWatcher> m_previousWatcher;
+};
+
+TEST_F(CConfigLuaDispatchers, rejectsFactoriesInBindAndDispatch) {
+    for (const auto* factory : {"hl.dsp.exec_raw", "hl.dsp.no_op", "hl.dsp.window.close"}) {
+        SCOPED_TRACE(factory);
+        const auto aliasResult = m_manager->eval(std::format("factory = {}", factory));
+        ASSERT_FALSE(aliasResult.has_value()) << aliasResult.value_or("");
+
+        for (const auto* value : {factory, "factory"}) {
+            for (const auto* api : {"hl.bind", "hl.dispatch"}) {
+                SCOPED_TRACE(std::format("{}({})", api, value));
+                const auto code   = std::string_view{api} == "hl.bind" ? std::format("hl.bind('SUPER + Q', {})", value) : std::format("hl.dispatch({})", value);
+                const auto result = m_manager->eval(code);
+                ASSERT_TRUE(result.has_value());
+                EXPECT_NE(result->find(std::format("{}: dispatcher factory supplied", api)), std::string::npos);
+                EXPECT_NE(result->find("missing parentheses?"), std::string::npos);
+                EXPECT_TRUE(Keybinds::mgr()->registry().empty());
+                EXPECT_EQ(lua_gettop(m_lua), 0);
+            }
+        }
+    }
+}
+
+TEST_F(CConfigLuaDispatchers, acceptsDispatchersAndCallbacks) {
+    const auto result = m_manager->eval(R"-(
+        calls = 0
+        local function callback() calls = calls + 1 end
+        local dispatcher = hl.dsp.no_op()
+        assert(type(dispatcher) == 'userdata')
+        assert(tostring(dispatcher) == 'HL.Dispatcher(no_op)')
+        assert(hl.bind('SUPER + Q', dispatcher) ~= nil)
+        assert(hl.bind('SUPER + W', callback) ~= nil)
+        assert(hl.bind('SUPER + E', collectgarbage) ~= nil)
+        assert(hl.dispatch(dispatcher).ok)
+        assert(hl.dispatch(callback).ok)
+        assert(calls == 1)
+    )-");
+    ASSERT_FALSE(result.has_value()) << result.value_or("");
+    ASSERT_EQ(Keybinds::mgr()->registry().size(), 3);
+    for (const auto& bind : Keybinds::mgr()->registry().binds()) {
+        EXPECT_TRUE(bind->invoke().success);
+    }
+
+    const auto callbackResult = m_manager->eval("assert(calls == 2)");
+    EXPECT_FALSE(callbackResult.has_value()) << callbackResult.value_or("");
+    EXPECT_EQ(lua_gettop(m_lua), 0);
+}
+
+TEST_F(CConfigLuaDispatchers, expiredKeybindHandlesAreInert) {
+    for (const auto* dispatcher : {"hl.dsp.no_op()", "function() end"}) {
+        SCOPED_TRACE(dispatcher);
+        for (const auto* removal : {"hl.unbind('SUPER + Q')", "binding:unbind()", "binding:remove()"}) {
+            SCOPED_TRACE(removal);
+            const auto result = m_manager->eval(std::format(R"-(
+                local binding = hl.bind('SUPER + Q', {}, {{ description = 'original' }})
+                assert(binding:is_enabled())
+                {}
+                local replacement = hl.bind('SUPER + Q', hl.dsp.no_op())
+                binding:unbind()
+                binding:remove()
+                binding:set_enabled(false)
+                binding:set_enabled(true)
+                assert(binding:is_enabled() == nil)
+                assert(binding.enabled == nil)
+                assert(binding.description == nil)
+                assert(tostring(binding) == 'HL.Keybind(expired)')
+                assert(replacement:is_enabled())
+                replacement:remove()
+            )-",
+                                                            dispatcher, removal));
+            ASSERT_FALSE(result.has_value()) << result.value_or("");
+            EXPECT_TRUE(Keybinds::mgr()->registry().empty());
+            EXPECT_EQ(lua_gettop(m_lua), 0);
+        }
+    }
+}
+
+TEST_F(CConfigLuaDispatchers, dispatchInsideCoroutineRunsTheDispatcher) {
+    const auto result = m_manager->eval(R"-(
+        ran = false
+        coroutine.wrap(function() assert(hl.dispatch(function() ran = true end).ok) end)()
+        assert(ran)
+    )-");
+    EXPECT_FALSE(result.has_value()) << result.value_or("");
+    EXPECT_EQ(lua_gettop(m_lua), 0);
+}
+
+TEST_F(CConfigLuaDispatchers, nonStringErrorInSubmapIsReported) {
+    const auto result = m_manager->eval("hl.define_submap('regression', function() error({}) end)");
+    ASSERT_TRUE(result.has_value());
+    EXPECT_NE(result->find("error in submap \"regression\": table: "), std::string::npos) << *result;
+    EXPECT_EQ(lua_gettop(m_lua), 0);
+}
+
+TEST_F(CConfigLuaDispatchers, nonStringErrorInGestureCallbackIsSurvived) {
+    ASSERT_EQ(luaL_dostring(m_lua, "return function() error({}) end"), LUA_OK);
+    CLuaFunctionGesture gesture{CLuaRef{m_manager->luaStateLifetime(), m_lua, -1}};
+    lua_pop(m_lua, 1);
+
+    gesture.end({});
+    EXPECT_EQ(lua_gettop(m_lua), 0);
+}
+
+TEST_F(CConfigLuaDispatchers, bindReturningHostileTableDoesNotAbort) {
+    const auto result = m_manager->eval("hl.bind('SUPER + Q', function() return setmetatable({}, { __index = function() error('nope') end }) end)");
+    ASSERT_FALSE(result.has_value()) << result.value_or("");
+    ASSERT_EQ(Keybinds::mgr()->registry().size(), 1);
+
+    for (const auto& bind : Keybinds::mgr()->registry().binds()) {
+        EXPECT_TRUE(bind->invoke().success);
+    }
+    EXPECT_EQ(lua_gettop(m_lua), 0);
+}
+
+TEST_F(CConfigLuaDispatchers, rejectsInvalidDispatcherValues) {
+    for (const auto* value : {"nil", "42", "{}", "'invalid'"}) {
+        SCOPED_TRACE(value);
+        const auto result = m_manager->eval(std::format("hl.bind('SUPER + Q', {})", value));
+        ASSERT_TRUE(result.has_value());
+        EXPECT_NE(result->find("hl.bind: expected a dispatcher"), std::string::npos);
+        EXPECT_TRUE(Keybinds::mgr()->registry().empty());
+        EXPECT_EQ(lua_gettop(m_lua), 0);
+    }
+}
+
+TEST_F(CConfigLuaDispatchers, enforcesFactoryArgumentLimits) {
+    struct SFactoryCase {
+        std::string_view name;
+        std::string_view args;
+        int              maxArgs = 1;
+    };
+
+    static constexpr SFactoryCase CASES[] = {
+        {"cursor.move_to_corner", "{ corner = 0 }"},
+        {"cursor.move", "{ x = 10, y = 20 }"},
+        {"group.toggle", "{}"},
+        {"group.next", "{}"},
+        {"group.prev", "{}"},
+        {"group.active", "{ index = 1 }"},
+        {"group.move_window", "{ forward = true }"},
+        {"group.lock", "{}"},
+        {"group.lock_active", "{}"},
+        {"window.close", "{}"},
+        {"window.kill", "{}"},
+        {"window.signal", "{ signal = 15 }"},
+        {"window.float", "{}"},
+        {"window.fullscreen", "{}"},
+        {"window.fullscreen_state", "{ internal = 0, client = 0 }"},
+        {"window.pseudo", "{}"},
+        {"window.move", "{ direction = 'left' }"},
+        {"window.swap", "{ direction = 'left' }"},
+        {"window.center", "{}"},
+        {"window.cycle_next", "{}"},
+        {"window.tag", "{ tag = 'test' }"},
+        {"window.clear_tags", "{}"},
+        {"window.toggle_swallow", "", 0},
+        {"window.pin", "{}"},
+        {"window.bring_to_top", "", 0},
+        {"window.alter_zorder", "{ mode = 'top' }"},
+        {"window.set_prop", "{ prop = 'opaque', value = '1' }"},
+        {"window.deny_from_group", "{}"},
+        {"window.drag", "", 0},
+        {"window.resize", "{ x = 10, y = 20 }"},
+        {"workspace.rename", "{ workspace = '1', name = 'test' }"},
+        {"workspace.change_id", "{ workspace = '1', id = 2 }"},
+        {"workspace.move", "{ monitor = 'DP-1' }"},
+        {"workspace.swap_monitors", "{ monitor1 = 'DP-1', monitor2 = 'DP-2' }"},
+        {"workspace.toggle_special", "'test'"},
+        {"exec_cmd", "'true', { float = true }", 2},
+        {"exec_raw", "'true'"},
+        {"exit", "", 0},
+        {"reload_config", "", 0},
+        {"submap", "'test'"},
+        {"pass", "{ window = 'active' }"},
+        {"send_shortcut", "{ mods = 'SUPER', key = 'Q' }"},
+        {"send_key_state", "{ mods = 'SUPER', key = 'Q', state = 'down' }"},
+        {"layout", "'test'"},
+        {"dpms", "{}"},
+        {"event", "'test'"},
+        {"global", "'test:shortcut', nil", 2},
+        {"force_renderer_reload", "", 0},
+        {"force_idle", "1"},
+        {"release_input_capture", "", 0},
+        {"focus", "{ direction = 'left' }"},
+        {"no_op", "", 0},
+    };
+
+    for (const auto& test : CASES) {
+        SCOPED_TRACE(test.name);
+        const auto valid = m_manager->eval(std::format("assert(type(hl.dsp.{}({})) == 'userdata')", test.name, test.args));
+        EXPECT_FALSE(valid.has_value()) << valid.value_or("");
+
+        for (const auto* extra : {"{ float = true }", "nil"}) {
+            SCOPED_TRACE(extra);
+            const auto result = m_manager->eval(std::format("assert(hl.dsp.{}({}{}{}) == nil)", test.name, test.args, test.maxArgs == 0 ? "" : ", ", extra));
+            ASSERT_TRUE(result.has_value());
+            const auto shortName = test.name.substr(test.name.find_last_of('.') + 1);
+            EXPECT_NE(result->find(std::format("{}: expected at most {} argument{}, got {}", shortName, test.maxArgs, test.maxArgs == 1 ? "" : "s", test.maxArgs + 1)),
+                      std::string::npos);
+            EXPECT_EQ(m_manager->m_errors.size(), 1);
+            EXPECT_EQ(lua_gettop(m_lua), 0);
+        }
+    }
+}
+
+TEST_F(CConfigLuaDispatchers, preservesOptionalFactoryArguments) {
+    const auto result = m_manager->eval(R"(
+        local factories = {
+            hl.dsp.group.toggle, hl.dsp.group.next, hl.dsp.group.prev,
+            hl.dsp.group.move_window, hl.dsp.group.lock, hl.dsp.group.lock_active,
+            hl.dsp.window.close, hl.dsp.window.kill, hl.dsp.window.float,
+            hl.dsp.window.fullscreen, hl.dsp.window.pseudo, hl.dsp.window.center,
+            hl.dsp.window.cycle_next, hl.dsp.window.clear_tags, hl.dsp.window.pin,
+            hl.dsp.window.deny_from_group, hl.dsp.window.resize,
+            hl.dsp.workspace.toggle_special, hl.dsp.dpms,
+        }
+        for _, factory in ipairs(factories) do
+            assert(type(factory()) == 'userdata')
+            assert(type(factory(nil)) == 'userdata')
+        end
+        local multiarg_factories = {
+            { [hl.dsp.exec_cmd] = { { 'true' }, { 'true', nil } }},
+            { [hl.dsp.exec_raw] = { { 123 } }},
+            { [hl.dsp.global]   = { { 'asdf' }, { 'asdf', nil }, { 'asdf', true } }},
+        }
+        for factory, args in pairs(multiarg_factories) do
+            for _, arg in ipairs(args) do
+                assert(type(factory(table.unpack(arg))) == 'userdata')
+            end
+        end
+    )");
+    EXPECT_FALSE(result.has_value()) << result.value_or("");
+    EXPECT_EQ(lua_gettop(m_lua), 0);
+}
+
+TEST_F(CConfigLuaDispatchers, reportsFactoryArgumentErrorsAtCallsite) {
+    const auto result = m_manager->eval(R"-(
+        local chunk = assert(load("hl.bind('SUPER + Q', hl.dsp.exec_raw('true', { float = true }))", '@dispatcher-arity.lua'))
+        chunk()
+    )-");
+    ASSERT_TRUE(result.has_value());
+    EXPECT_NE(result->find("dispatcher-arity.lua:1: exec_raw: expected at most 1 argument, got 2"), std::string::npos);
+    EXPECT_TRUE(Keybinds::mgr()->registry().empty());
+    EXPECT_EQ(lua_gettop(m_lua), 0);
+}
+
+TEST_F(CConfigLuaDispatchers, preservesRequiredFactoryArgumentChecks) {
+    for (const auto* args : {"", "{}"}) {
+        SCOPED_TRACE(args);
+        const auto result = m_manager->eval(std::format("assert(hl.dsp.exec_raw({}) == nil)", args));
+        ASSERT_TRUE(result.has_value());
+        EXPECT_NE(result->find("exec_raw: bad argument 1:"), std::string::npos);
+        EXPECT_EQ(m_manager->m_errors.size(), 1);
+        EXPECT_EQ(lua_gettop(m_lua), 0);
     }
 }
 
@@ -273,6 +575,153 @@ TEST(ConfigLuaBindingsInternal, parseTableFieldMissingFieldAndPrefixedErrors) {
     lua_pop(L, 1);
 }
 
+TEST(ConfigLuaBindingsInternal, borderColorRulePreservesLegacyEndpoints) {
+    struct SCase {
+        const char* raw           = nullptr;
+        bool        active        = false;
+        bool        inactive      = false;
+        int         activeAngle   = 0;
+        int         inactiveAngle = 0;
+    };
+
+    static constexpr SCase CASES[] = {
+        {"0xFF112233 0xFF445566", true, true},
+        {"0xFF112233", true, false},
+        {"0xFF112233 90deg", true, false, 90},
+        {"0deg 0xFF445566 90deg", false, true, 0, 90},
+    };
+
+    for (const auto& test : CASES) {
+        SCOPED_TRACE(test.raw);
+        Desktop::Rule::CWindowRule rule;
+        const auto                 result = rule.addEffect(Desktop::Rule::WINDOW_RULE_EFFECT_BORDER_COLOR, test.raw);
+        ASSERT_TRUE(result.has_value()) << result.error();
+        ASSERT_EQ(rule.effects().size(), 1);
+        const auto border = std::get_if<Desktop::Rule::SBorderColorRule>(&rule.effects().front().value);
+        ASSERT_NE(border, nullptr);
+        ASSERT_EQ(border->active.has_value(), test.active);
+        ASSERT_EQ(border->inactive.has_value(), test.inactive);
+
+        if (border->active) {
+            ASSERT_EQ(border->active->m_colors.size(), 1);
+            EXPECT_EQ(border->active->m_colors.front().getAsHex(), 0xFF112233);
+            EXPECT_NEAR(border->active->m_angle, test.activeAngle * std::numbers::pi / 180.0, 0.0001);
+            EXPECT_FALSE(border->active->m_wholeMonitor);
+        }
+        if (border->inactive) {
+            ASSERT_EQ(border->inactive->m_colors.size(), 1);
+            EXPECT_EQ(border->inactive->m_colors.front().getAsHex(), 0xFF445566);
+            EXPECT_NEAR(border->inactive->m_angle, test.inactiveAngle * std::numbers::pi / 180.0, 0.0001);
+            EXPECT_FALSE(border->inactive->m_wholeMonitor);
+        }
+    }
+}
+
+TEST(ConfigLuaBindingsInternal, borderColorRuleRoundTripsIndependentWholeMonitorEndpoints) {
+    CLuaState  state;
+    const auto lua  = state.get();
+    const auto desc = Internal::findDescByName(Internal::WINDOW_RULE_EFFECT_DESCS, "border_color");
+    ASSERT_NE(desc, nullptr);
+
+    for (const bool activeWholeMonitor : {false, true}) {
+        for (const bool inactiveWholeMonitor : {false, true}) {
+            auto       active       = UP<ILuaConfigValue>(desc->factory());
+            auto       inactive     = UP<ILuaConfigValue>(desc->factory());
+            const auto activeCode   = std::format("return {{ colors = {{ '0xFF112233', '0xFF445566' }}, angle = 90, whole_monitor = {} }}", activeWholeMonitor);
+            const auto inactiveCode = std::format("return {{ colors = {{ '0xFF778899', '0xFFAABBCC' }}, angle = 180, whole_monitor = {} }}", inactiveWholeMonitor);
+            ASSERT_EQ(luaL_dostring(lua, activeCode.c_str()), LUA_OK);
+            ASSERT_EQ(active->parse(lua).errorCode, PARSE_ERROR_OK);
+            lua_pop(lua, 1);
+            ASSERT_EQ(luaL_dostring(lua, inactiveCode.c_str()), LUA_OK);
+            ASSERT_EQ(inactive->parse(lua).errorCode, PARSE_ERROR_OK);
+            lua_pop(lua, 1);
+
+            const auto activeGradient   = dynamic_cast<CLuaConfigGradient*>(active.get());
+            const auto inactiveGradient = dynamic_cast<CLuaConfigGradient*>(inactive.get());
+            ASSERT_NE(activeGradient, nullptr);
+            ASSERT_NE(inactiveGradient, nullptr);
+
+            struct SCase {
+                std::string raw;
+                bool        active   = false;
+                bool        inactive = false;
+            };
+            const SCase CASES[] = {
+                {active->toString() + " " + inactive->toString(), true, true},
+                {active->toString(), true, false},
+                {"0deg " + inactive->toString(), false, true},
+            };
+
+            for (const auto& test : CASES) {
+                SCOPED_TRACE(test.raw);
+                Desktop::Rule::CWindowRule rule;
+                const auto                 result = rule.addEffect(desc->effect, test.raw);
+                ASSERT_TRUE(result.has_value()) << result.error();
+                ASSERT_EQ(rule.effects().size(), 1);
+                const auto border = std::get_if<Desktop::Rule::SBorderColorRule>(&rule.effects().front().value);
+                ASSERT_NE(border, nullptr);
+                ASSERT_EQ(border->active.has_value(), test.active);
+                ASSERT_EQ(border->inactive.has_value(), test.inactive);
+
+                if (border->active) {
+                    EXPECT_EQ(*border->active, activeGradient->parsed());
+                    EXPECT_EQ(border->active->m_wholeMonitor, activeWholeMonitor);
+                    EXPECT_EQ(border->active->m_colorsOkLabA, activeGradient->parsed().m_colorsOkLabA);
+                }
+                if (border->inactive) {
+                    EXPECT_EQ(*border->inactive, inactiveGradient->parsed());
+                    EXPECT_EQ(border->inactive->m_wholeMonitor, inactiveWholeMonitor);
+                    EXPECT_EQ(border->inactive->m_colorsOkLabA, inactiveGradient->parsed().m_colorsOkLabA);
+                }
+            }
+        }
+    }
+}
+
+TEST(ConfigLuaBindingsInternal, borderColorLuaTablePreservesWholeMonitorAndRejectsInvalidType) {
+    CLuaState  state;
+    const auto lua  = state.get();
+    const auto desc = Internal::findDescByName(Internal::WINDOW_RULE_EFFECT_DESCS, "border_color");
+    ASSERT_NE(desc, nullptr);
+    const auto rule = makeShared<Desktop::Rule::CWindowRule>();
+
+    ASSERT_EQ(luaL_dostring(lua, "return { colors = { '0xFF112233' }, angle = 90, whole_monitor = true }"), LUA_OK);
+    const auto result = Internal::addWindowRuleEffectFromLua(lua, *desc, rule);
+    ASSERT_TRUE(result.has_value()) << result.error();
+    lua_pop(lua, 1);
+    ASSERT_EQ(rule->effects().size(), 1);
+    const auto border = std::get_if<Desktop::Rule::SBorderColorRule>(&rule->effects().front().value);
+    ASSERT_NE(border, nullptr);
+    ASSERT_TRUE(border->active.has_value());
+    EXPECT_TRUE(border->active->m_wholeMonitor);
+    EXPECT_FALSE(border->inactive.has_value());
+    EXPECT_EQ(rule->effects().front().raw, "0xFF112233 whole_monitor 90deg");
+
+    ASSERT_EQ(luaL_dostring(lua, "return { colors = { '0xFF445566' }, whole_monitor = 1 }"), LUA_OK);
+    const auto invalid = Internal::addWindowRuleEffectFromLua(lua, *desc, rule);
+    ASSERT_FALSE(invalid.has_value());
+    EXPECT_NE(invalid.error().find("whole_monitor"), std::string::npos);
+    lua_pop(lua, 1);
+    EXPECT_EQ(rule->effects().size(), 1);
+    EXPECT_EQ(rule->effects().front().raw, "0xFF112233 whole_monitor 90deg");
+}
+
+TEST(ConfigLuaBindingsInternal, borderColorRuleRejectsInvalidGradientWithoutAddingEffect) {
+    Desktop::Rule::CWindowRule rule;
+    ASSERT_TRUE(rule.addEffect(Desktop::Rule::WINDOW_RULE_EFFECT_BORDER_COLOR, "0xFF112233 whole_monitor 90deg").has_value());
+
+    for (const auto* invalid : {"0xFF445566 whole_monitor baddeg", "0deg 0xFF445566 whole_monitor baddeg", "invalid whole_monitor 90deg", "whole_monitor 90deg"}) {
+        SCOPED_TRACE(invalid);
+        EXPECT_FALSE(rule.addEffect(Desktop::Rule::WINDOW_RULE_EFFECT_BORDER_COLOR, invalid).has_value());
+        ASSERT_EQ(rule.effects().size(), 1);
+        const auto border = std::get_if<Desktop::Rule::SBorderColorRule>(&rule.effects().front().value);
+        ASSERT_NE(border, nullptr);
+        ASSERT_TRUE(border->active.has_value());
+        EXPECT_TRUE(border->active->m_wholeMonitor);
+        EXPECT_EQ(rule.effects().front().raw, "0xFF112233 whole_monitor 90deg");
+    }
+}
+
 TEST(ConfigLuaBindingsInternal, pluginBindingIsTableWithLoadFunction) {
     CLuaState  S;
     const auto L = S.get();
@@ -288,6 +737,57 @@ TEST(ConfigLuaBindingsInternal, pluginBindingIsTableWithLoadFunction) {
     lua_pop(L, 1);
 
     lua_pop(L, 2);
+}
+
+TEST(ConfigLuaBindingsInternal, getMonitorsReadsOptionsFromArguments) {
+    CLuaState  state;
+    const auto lua = state.get();
+
+    lua_newtable(lua);
+    Internal::registerQueryBindings(lua);
+    lua_setglobal(lua, "hl");
+
+    ASSERT_EQ(luaL_dostring(lua, R"(
+        assert(type(hl.get_monitors()) == "table")
+        assert(type(hl.get_monitors(nil)) == "table")
+        assert(type(hl.get_monitors({})) == "table")
+        assert(type(hl.get_monitors({ all = false })) == "table")
+        assert(type(hl.get_monitors({ all = true })) == "table")
+        assert(hl.get_monitors({ all = "true" }) == nil)
+        assert(hl.get_monitors(true) == nil)
+    )"),
+              LUA_OK)
+        << lua_tostring(lua, -1);
+}
+
+TEST(ConfigLuaBindingsInternal, deprecationNoticesOnlyIncludeUsedDeprecatedValues) {
+    CScopedCompositor compositor;
+    CLuaState         state;
+    const auto        lua = state.get();
+
+    CConfigManager    mgr;
+    CConfigManagerPluginLuaTestAccessor::initializeLuaState(mgr, lua);
+
+    lua_newtable(lua);
+    Internal::registerConfigRuleBindings(lua, &mgr);
+    lua_setglobal(lua, "hl");
+
+    const auto HANDLE = reinterpret_cast<void*>(0x1BADB002);
+    ASSERT_TRUE(mgr.registerPluginValue(HANDLE, makeShared<Config::Values::CIntValue>("test:ordinary", "", 0)).has_value());
+    ASSERT_TRUE(
+        mgr.registerPluginValue(HANDLE, makeShared<Config::Values::CIntValue>("test:deprecated", "", 0, Config::Values::SIntValueOptions{.deprecationNotice = "use replacement"}))
+            .has_value());
+
+    EXPECT_TRUE(mgr.deprecationNotices().empty());
+
+    ASSERT_EQ(luaL_dostring(lua, "hl.config({ test = { ordinary = 1 } })"), LUA_OK) << lua_tostring(lua, -1);
+    EXPECT_TRUE(mgr.deprecationNotices().empty());
+
+    ASSERT_EQ(luaL_dostring(lua, "hl.config({ test = { deprecated = 1 } })"), LUA_OK) << lua_tostring(lua, -1);
+
+    const auto notices = mgr.deprecationNotices();
+    ASSERT_EQ(notices.size(), 1);
+    EXPECT_EQ(notices.front(), "test.deprecated: use replacement");
 }
 
 TEST(ConfigLuaBindingsInternal, pluginLuaFnIsUnloadedWithoutDanglingCall) {
@@ -348,7 +848,7 @@ TEST(ConfigLuaRequire, absolutePathLoadsAndTracksFile) {
     CConfigManagerPluginLuaTestAccessor::initializeOwnedLuaState(mgr, mainConfig);
     const auto L = CConfigManagerPluginLuaTestAccessor::luaState(mgr);
 
-    const auto CODE = "mod = require(" + luaString(module.string()) + ")";
+    const auto CODE = std::format("mod = require({})", luaString(module.string()));
     ASSERT_EQ(luaL_dostring(L, CODE.c_str()), LUA_OK) << lua_tostring(L, -1);
 
     lua_getglobal(L, "mod");
@@ -459,4 +959,62 @@ TEST(ConfigLuaRequire, normalModuleRequireStillUsesConfigDirectoryPackagePath) {
     lua_pop(L, 1);
 
     expectTracked(mgr, module);
+}
+
+TEST(ConfigLuaRequire, packagePathPreservesLuaDefaultsAfterConfigDirectory) {
+    CScopedCompositor compositor;
+    CLuaState         defaultState;
+    CTempDir          tmp;
+    const auto        mainConfig = tmp.path() / "hyprland.lua";
+    writeFile(mainConfig, "");
+
+    const auto defaultPath = packagePath(defaultState.get());
+    ASSERT_FALSE(defaultPath.empty());
+
+    CConfigManager mgr;
+    CConfigManagerPluginLuaTestAccessor::initializeOwnedLuaState(mgr, mainConfig);
+
+    const auto configPath = std::format("{};{}", (tmp.path() / "?.lua").string(), (tmp.path() / "?/init.lua").string());
+    EXPECT_EQ(packagePath(CConfigManagerPluginLuaTestAccessor::luaState(mgr)), std::format("{};{}", configPath, defaultPath));
+}
+
+TEST(ConfigLuaBindingsInternal, bindResultReadsWhatResultWritersWrite) {
+    CLuaState  S;
+    const auto L = S.get();
+
+    Internal::pushSuccessResult(L, {.passEvent = true});
+    lua_pushboolean(L, true);
+    lua_setfield(L, -2, "request_release");
+    const auto SUCCESS = Internal::bindResultFromTable(L, -1);
+    lua_pop(L, 1);
+    EXPECT_TRUE(SUCCESS.success);
+    EXPECT_TRUE(SUCCESS.passEvent);
+    EXPECT_EQ(SUCCESS.followUp, Keybinds::BIND_FOLLOW_UP_TRIGGER_RELEASE);
+
+    Internal::pushErrorResult(L, Config::Actions::SActionError{"boom", Config::Actions::eActionErrorLevel::ERROR, Config::Actions::eActionErrorCode::LUA_ERROR});
+    const auto FAILURE = Internal::bindResultFromTable(L, -1);
+    lua_pop(L, 1);
+    EXPECT_FALSE(FAILURE.success);
+    EXPECT_EQ(FAILURE.error, "boom");
+    EXPECT_EQ(FAILURE.followUp, Keybinds::BIND_FOLLOW_UP_NONE);
+
+    // a callback that returns nothing succeeded
+    lua_pushnil(L);
+    EXPECT_TRUE(Internal::bindResultFromTable(L, -1).success);
+    lua_pop(L, 1);
+
+    EXPECT_EQ(lua_gettop(L), 0);
+}
+
+TEST(ConfigLuaBindingsInternal, bindResultIgnoresMetamethods) {
+    CLuaState  S;
+    const auto L = S.get();
+
+    // read outside any protected call: a raising __index must not be invoked
+    ASSERT_EQ(luaL_dostring(L, "return setmetatable({}, { __index = function() error('nope') end })"), LUA_OK);
+    const auto RESULT = Internal::bindResultFromTable(L, -1);
+    lua_pop(L, 1);
+
+    EXPECT_TRUE(RESULT.success);
+    EXPECT_EQ(lua_gettop(L), 0);
 }

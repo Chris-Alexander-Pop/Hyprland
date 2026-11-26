@@ -23,6 +23,7 @@
 
 namespace Render {
     class ITexture;
+    struct SCMSettings;
 }
 
 namespace NColorManagement {
@@ -74,9 +75,9 @@ namespace NColorManagement {
     inline wpColorManagerV1TransferFunction convertTransferFunction(eTransferFunction tf, bool useV1SRGB = true) {
         switch (tf) {
             case CM_TRANSFER_FUNCTION_LINEAR:
-                Log::logger->log(Log::TRACE,
-                                 "CM_TRANSFER_FUNCTION_LINEAR is internal and buffers with this TF shouldn't go outside. Returning "
-                                 "WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_EXT_LINEAR for preferred description instead");
+                LOG(Log::TRACE,
+                    "CM_TRANSFER_FUNCTION_LINEAR is internal and buffers with this TF shouldn't go outside. Returning "
+                    "WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_EXT_LINEAR for preferred description instead");
                 return WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_EXT_LINEAR;
             case CM_TRANSFER_FUNCTION_SRGB: return useV1SRGB ? WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_SRGB : WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_COMPOUND_POWER_2_4;
             default: return sc<wpColorManagerV1TransferFunction>(tf);
@@ -279,9 +280,11 @@ namespace NColorManagement {
             return primaries;
         }
 
+        float getContentMaxLuminance(float fallback) const;
+
         float getTFMinLuminance(float sdrMinLuminance = -1.0f) const {
             switch (transferFunction) {
-                case CM_TRANSFER_FUNCTION_EXT_LINEAR: return 0;
+                case CM_TRANSFER_FUNCTION_EXT_LINEAR: return isWindows ? 0.0f : luminances.min;
                 case CM_TRANSFER_FUNCTION_ST2084_PQ:
                 case CM_TRANSFER_FUNCTION_HLG: return HDR_MIN_LUMINANCE;
                 case CM_TRANSFER_FUNCTION_BT1886: return 0.01;
@@ -301,7 +304,8 @@ namespace NColorManagement {
         float getTFMaxLuminance(int sdrMaxLuminance = -1) const {
             switch (transferFunction) {
                 case CM_TRANSFER_FUNCTION_EXT_LINEAR:
-                    return SDR_MAX_LUMINANCE; // assume Windows scRGB. white color range 1.0 - 125.0 maps to SDR_MAX_LUMINANCE (80) - HDR_MAX_LUMINANCE (10000)
+                    // Windows scRGB uses a fixed 80-nit scale, independently of the luminance metadata.
+                    return isWindows ? SDR_MAX_LUMINANCE : luminances.max;
                 case CM_TRANSFER_FUNCTION_ST2084_PQ: return HDR_MAX_LUMINANCE;
                 case CM_TRANSFER_FUNCTION_HLG: return HLG_MAX_LUMINANCE;
                 case CM_TRANSFER_FUNCTION_BT1886: return 100;
@@ -320,7 +324,7 @@ namespace NColorManagement {
 
         float getTFRefLuminance(int sdrRefLuminance = -1) const {
             switch (transferFunction) {
-                case CM_TRANSFER_FUNCTION_EXT_LINEAR:
+                case CM_TRANSFER_FUNCTION_EXT_LINEAR: return isWindows ? HDR_REF_LUMINANCE : luminances.reference;
                 case CM_TRANSFER_FUNCTION_ST2084_PQ:
                 case CM_TRANSFER_FUNCTION_HLG: return HDR_REF_LUMINANCE;
                 case CM_TRANSFER_FUNCTION_BT1886: return 100;
@@ -381,8 +385,8 @@ namespace NColorManagement {
 
     using PImageDescription = WP<const CImageDescription>;
 
-    RGBAColor         convertColor(RGBAColor color, PImageDescription srcDesc, PImageDescription dstDesc);
-    CHyprColor        convertColor(const CHyprColor& color, PImageDescription srcDesc, PImageDescription dstDesc);
+    RGBAColor         convertColor(RGBAColor color, PImageDescription srcDesc, PImageDescription dstDesc, const Render::SCMSettings& settings);
+    CHyprColor        convertColor(const CHyprColor& color, PImageDescription srcDesc, PImageDescription dstDesc, const Render::SCMSettings& settings);
 
     PImageDescription getDefaultImageDescription();
 
@@ -416,7 +420,7 @@ namespace NColorManagement {
         .primariesNameSet = true,
         .primariesNamed   = NColorManagement::CM_PRIMARIES_SRGB,
         .primaries        = NColorPrimaries::BT709,
-        .luminances       = {.reference = 203},
+        .luminances       = {.min = 0, .max = 10000, .reference = 203},
     });
 
     inline const auto BT2100_IMAGE_DESCRIPTION = CImageDescription::from(SImageDescription{
@@ -425,11 +429,13 @@ namespace NColorManagement {
         .primariesNameSet = true,
         .primariesNamed   = NColorManagement::CM_PRIMARIES_BT2020,
         .primaries        = NColorPrimaries::BT2020,
-        .luminances       = {.reference = 203},
+        .luminances       = {.min = HDR_MIN_LUMINANCE, .max = 10000, .reference = 203},
     });
 
     inline const auto LINEAR_IMAGE_DESCRIPTION = CImageDescription::from(SImageDescription{
         .transferFunction = NColorManagement::CM_TRANSFER_FUNCTION_EXT_LINEAR,
+        // Keep scRGB's 80-nit encoding independently of the monitor's luminance metadata.
+        .isWindows        = true,
         .primariesNameSet = true,
         .primariesNamed   = NColorManagement::CM_PRIMARIES_SRGB,
         .primaries        = NColorPrimaries::BT709,

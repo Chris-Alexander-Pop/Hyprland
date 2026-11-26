@@ -26,8 +26,6 @@ commands:
     hyprsunset ...      → Issue a hyprsunset request
     instances           → Lists all running instances of Hyprland with
                           their info
-    keyword <name> <value> → Issue a keyword to call a config keyword
-                          dynamically
     kill                → Issue a kill to get into a kill mode, where you can
                           kill an app by clicking on it. You can exit it
                           with ESCAPE
@@ -148,8 +146,7 @@ regex:
     Regular expression by which a window will be searched
 
 property:
-    See https://wiki.hypr.land/Configuring/Using-hyprctl/#setprop for list
-    of properties
+    See the wiki for a list of properties
 
 value:
     Property value
@@ -167,8 +164,7 @@ regex:
     Regular expression by which a window will be searched
 
 property:
-    See https://wiki.hypr.land/Configuring/Using-hyprctl/#setprop for list
-    of properties
+    See the wiki for a list of properties
 
 flags:
     See 'hyprctl --help')#";

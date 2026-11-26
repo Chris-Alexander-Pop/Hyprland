@@ -1,4 +1,5 @@
 #include "SystemInfo.hpp"
+#include "MiscFunctions.hpp"
 
 #include "../Compositor.hpp"
 #include "../version.h"
@@ -20,13 +21,14 @@ using namespace Helpers::SystemInfo;
 using namespace Helpers;
 using namespace Hyprutils::String;
 using namespace Render::GL;
+using namespace IPC::Socket1;
 
 static void trimTrailingComma(std::string& str) {
     if (!str.empty() && str.back() == ',')
         str.pop_back();
 }
 
-std::string SystemInfo::getStatus(eHyprCtlOutputFormat fmt) {
+std::string SystemInfo::getStatus(eOutputFormat fmt) {
     Aquamarine::eBackendType backendType = Aquamarine::eBackendType::AQ_BACKEND_NULL;
 
     for (const auto& i : g_pCompositor->m_aqBackend->getImplementations()) {
@@ -45,7 +47,7 @@ std::string SystemInfo::getStatus(eHyprCtlOutputFormat fmt) {
         default: backendStr = "error"; break;
     }
 
-    if (fmt == eHyprCtlOutputFormat::FORMAT_JSON) {
+    if (fmt == IPC::Socket1::FORMAT_JSON) {
 
         return std::format(R"#(
 {{
@@ -63,12 +65,12 @@ backend: {}
                        Config::typeToString(Config::mgr()->type()), backendStr);
 }
 
-std::string SystemInfo::getVersion(eHyprCtlOutputFormat fmt) {
+std::string SystemInfo::getVersion(eOutputFormat fmt) {
 
     auto commitMsg = trim(GIT_COMMIT_MESSAGE);
     std::ranges::replace(commitMsg, '#', ' ');
 
-    if (fmt == eHyprCtlOutputFormat::FORMAT_NORMAL) {
+    if (fmt == IPC::Socket1::FORMAT_NORMAL) {
         std::string result = std::format("Hyprland {} built from branch {} at commit {} {} ({}).\n"
                                          "Date: {}\n"
                                          "Tag: {}, commits: {}\n",
@@ -108,21 +110,18 @@ std::string SystemInfo::getVersion(eHyprCtlOutputFormat fmt) {
     "tag": "{}",
     "commits": "{}",
     "buildAquamarine": "{}",
-    "buildHyprlang": "{}",
     "buildHyprutils": "{}",
     "buildHyprcursor": "{}",
     "buildHyprgraphics": "{}",
     "systemAquamarine": "{}",
-    "systemHyprlang": "{}",
     "systemHyprutils": "{}",
     "systemHyprcursor": "{}",
     "systemHyprgraphics": "{}",
     "abiHash": "{}",
     "flags": [)#",
             GIT_BRANCH, GIT_COMMIT_HASH, HYPRLAND_VERSION, (GIT_DIRTY == std::string_view{"dirty"} ? "true" : "false"), escapeJSONStrings(commitMsg), GIT_COMMIT_DATE, GIT_TAG,
-            GIT_COMMITS, AQUAMARINE_VERSION, HYPRLANG_VERSION, HYPRUTILS_VERSION, HYPRCURSOR_VERSION, HYPRGRAPHICS_VERSION, getSystemLibraryVersion("aquamarine"),
-            getSystemLibraryVersion("hyprlang"), getSystemLibraryVersion("hyprutils"), getSystemLibraryVersion("hyprcursor"), getSystemLibraryVersion("hyprgraphics"),
-            __hyprland_api_get_hash());
+            GIT_COMMITS, AQUAMARINE_VERSION, HYPRUTILS_VERSION, HYPRCURSOR_VERSION, HYPRGRAPHICS_VERSION, getSystemLibraryVersion("aquamarine"),
+            getSystemLibraryVersion("hyprutils"), getSystemLibraryVersion("hyprcursor"), getSystemLibraryVersion("hyprgraphics"), __hyprland_api_get_hash());
 
 #if ISDEBUG
         result += "\"debug\",";
@@ -145,7 +144,7 @@ std::string SystemInfo::getVersion(eHyprCtlOutputFormat fmt) {
 }
 
 std::string SystemInfo::getSystemInfo() {
-    std::string result = getVersion(eHyprCtlOutputFormat::FORMAT_NORMAL);
+    std::string result = getVersion(IPC::Socket1::FORMAT_NORMAL);
 
     static auto check   = [](bool y) -> std::string { return y ? "✔️" : "❌"; };
     static auto backend = [](Aquamarine::eBackendType t) -> std::string {
@@ -164,10 +163,10 @@ std::string SystemInfo::getSystemInfo() {
 
     uname(&unameInfo);
 
-    result += "System name: " + std::string{unameInfo.sysname} + "\n";
-    result += "Node name: " + std::string{unameInfo.nodename} + "\n";
-    result += "Release: " + std::string{unameInfo.release} + "\n";
-    result += "Version: " + std::string{unameInfo.version} + "\n";
+    result += std::format("System name: {}\n", unameInfo.sysname);
+    result += std::format("Node name: {}\n", unameInfo.nodename);
+    result += std::format("Release: {}\n", unameInfo.release);
+    result += std::format("Version: {}\n", unameInfo.version);
     result += "\n";
     result += getBuiltSystemLibraryNames();
     result += "\n";
@@ -198,7 +197,7 @@ std::string SystemInfo::getSystemInfo() {
 #else
     const std::string GPUINFO = execAndGet("lspci -vnn | grep -E '(VGA|Display|3D)'");
 #endif
-    result += "GPU information: \n" + GPUINFO;
+    result += std::format("GPU information: \n{}", GPUINFO);
     if (GPUINFO.contains("NVIDIA") && std::filesystem::exists("/proc/driver/nvidia/version")) {
         std::ifstream file("/proc/driver/nvidia/version");
         std::string   line;
@@ -217,7 +216,7 @@ std::string SystemInfo::getSystemInfo() {
     if (std::ifstream file("/etc/os-release"); file.is_open()) {
         std::stringstream buffer;
         buffer << file.rdbuf();
-        result += "os-release: " + buffer.str() + "\n\n";
+        result += std::format("os-release: {}\n\n", buffer.str());
     } else
         result += "os-release: error\n\n";
 
@@ -232,6 +231,7 @@ std::string SystemInfo::getSystemInfo() {
     if (g_pHyprOpenGL) {
         result += std::format("\nExplicit sync: {}", g_pHyprOpenGL->m_exts.EGL_ANDROID_native_fence_sync_ext ? "supported" : "missing");
         result += std::format("\nGL ver: {}", g_pHyprOpenGL->m_eglContextVersion == CHyprOpenGLImpl::EGL_CONTEXT_GLES_3_2 ? "3.2" : "3.0");
+        result += std::format("\nFP16: {}", g_pHyprOpenGL->fp16Supported() ? "supported" : "missing");
     }
 
     if (g_pCompositor) {
@@ -250,7 +250,7 @@ std::string SystemInfo::getSystemInfo() {
     }
 
     result += "\n\nState:\n";
-    result += getStatus(FORMAT_NORMAL);
+    result += getStatus(IPC::Socket1::FORMAT_NORMAL);
 
     result += "\n\n";
 

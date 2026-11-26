@@ -7,12 +7,14 @@
 #include <hyprutils/string/String.hpp>
 #include <string>
 #include <algorithm>
+#include <cmath>
+#include <format>
 
 using namespace Config;
 using namespace Hyprutils::String;
 
 static bool parseModeLine(const std::string& modeline, drmModeModeInfo& mode) {
-    auto args = CVarList2(std::string{modeline}, 0, 's');
+    auto args = CVarList2(std::string{modeline}, 0, 's', true);
 
     auto keyword = std::string{args[0]};
     std::ranges::transform(keyword, keyword.begin(), ::tolower);
@@ -21,7 +23,7 @@ static bool parseModeLine(const std::string& modeline, drmModeModeInfo& mode) {
         return false;
 
     if (args.size() < 10) {
-        Log::logger->log(Log::ERR, "modeline parse error: expected at least 9 arguments, got {}", args.size() - 1);
+        LOG(Log::ERR, "modeline parse error: expected at least 9 arguments, got {}", args.size() - 1);
         return false;
     }
 
@@ -41,13 +43,14 @@ static bool parseModeLine(const std::string& modeline, drmModeModeInfo& mode) {
     if (auto n = strToNumber<type>(args[argno++]); n)                                                                                                                              \
         prop = n.value();                                                                                                                                                          \
     else {                                                                                                                                                                         \
-        Log::logger->log(Log::ERR, "modeline parse error: invalid input at \"{}\": {}", args[argno - 1], huErrStr(n.error()));                                                     \
+        LOG(Log::ERR, "modeline parse error: invalid input at \"{}\": {}", args[argno - 1], huErrStr(n.error()));                                                                  \
         return false;                                                                                                                                                              \
     }
 
     mode.type = DRM_MODE_TYPE_USERDEF;
 
-    ASSIGN_OR_FAIL(mode.clock, float);
+    double pixelClock = 0;
+    ASSIGN_OR_FAIL(pixelClock, double);
     ASSIGN_OR_FAIL(mode.hdisplay, int);
     ASSIGN_OR_FAIL(mode.hsync_start, int);
     ASSIGN_OR_FAIL(mode.hsync_end, int);
@@ -57,7 +60,7 @@ static bool parseModeLine(const std::string& modeline, drmModeModeInfo& mode) {
     ASSIGN_OR_FAIL(mode.vsync_end, int);
     ASSIGN_OR_FAIL(mode.vtotal, int);
 
-    mode.clock *= 1000;
+    mode.clock    = std::round(pixelClock * 1000);
     mode.vrefresh = mode.clock * 1000.0 * 1000.0 / mode.htotal / mode.vtotal;
 
 #undef ASSIGN_OR_FAIL
@@ -68,7 +71,7 @@ static bool parseModeLine(const std::string& modeline, drmModeModeInfo& mode) {
         {"-hsync", DRM_MODE_FLAG_NHSYNC},
         {"+vsync", DRM_MODE_FLAG_PVSYNC},
         {"-vsync", DRM_MODE_FLAG_NVSYNC},
-        {"Interlace", DRM_MODE_FLAG_INTERLACE},
+        {"interlace", DRM_MODE_FLAG_INTERLACE},
     };
     // clang-format on
 
@@ -81,10 +84,14 @@ static bool parseModeLine(const std::string& modeline, drmModeModeInfo& mode) {
         if (it != flagsmap.end())
             mode.flags |= it->second;
         else
-            Log::logger->log(Log::ERR, "Invalid flag {} in modeline", key);
+            LOG(Log::ERR, "Invalid flag {} in modeline", key);
     }
 
-    snprintf(mode.name, sizeof(mode.name), "%dx%d@%d", mode.hdisplay, mode.vdisplay, mode.vrefresh / 1000);
+    if (mode.flags & DRM_MODE_FLAG_INTERLACE)
+        mode.vrefresh *= 2;
+
+    const auto [nameEnd, size] = std::format_to_n(mode.name, sizeof(mode.name) - 1, "{}x{}@{}", mode.hdisplay, mode.vdisplay, mode.vrefresh / 1000);
+    *nameEnd                   = '\0';
 
     return true;
 }
@@ -163,11 +170,11 @@ bool CMonitorRuleParser::parsePosition(const std::string& value, bool isFirst) {
         else if (value == "auto-center-down")
             m_rule.m_autoDir = eAutoDirs::DIR_AUTO_CENTER_DOWN;
         else {
-            Log::logger->log(Log::WARN,
-                             "Invalid auto direction. Valid options are 'auto',"
-                             "'auto-up', 'auto-down', 'auto-left', 'auto-right',"
-                             "'auto-center-up', 'auto-center-down',"
-                             "'auto-center-left', and 'auto-center-right'.");
+            LOG(Log::WARN,
+                "Invalid auto direction. Valid options are 'auto',"
+                "'auto-up', 'auto-down', 'auto-left', 'auto-right',"
+                "'auto-center-up', 'auto-center-down',"
+                "'auto-center-left', and 'auto-center-right'.");
             m_error += "invalid auto direction ";
             return false;
         }
@@ -218,7 +225,7 @@ bool CMonitorRuleParser::parseTransform(const std::string& value) {
 
     const auto TSF = std::stoi(value);
     if (std::clamp(TSF, 0, 7) != TSF) {
-        Log::logger->log(Log::ERR, "Invalid transform {} in monitor", TSF);
+        LOG(Log::ERR, "Invalid transform {} in monitor", TSF);
         m_error += "invalid transform ";
         return false;
     }

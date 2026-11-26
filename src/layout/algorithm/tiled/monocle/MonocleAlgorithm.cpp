@@ -1,8 +1,10 @@
 #include "MonocleAlgorithm.hpp"
+#include "../../../../desktop/view/window/WindowPresentation.hpp"
 
 #include "../../Algorithm.hpp"
 #include "../../../space/Space.hpp"
 #include "../../../target/WindowTarget.hpp"
+#include "../../../../desktop/view/window/Window.hpp"
 #include "../../../LayoutManager.hpp"
 
 #include "../../../../managers/fullscreen/handler/FullscreenHandler.hpp"
@@ -29,7 +31,7 @@ CMonocleAlgorithm::CMonocleAlgorithm() {
         if (!pWindow)
             return;
 
-        if (!pWindow->m_workspace->isVisible())
+        if (!pWindow->m_workspace->visible())
             return;
 
         const auto TARGET = pWindow->layoutTarget();
@@ -49,8 +51,8 @@ CMonocleAlgorithm::~CMonocleAlgorithm() {
 
         const auto WINDOW = TARGET->window();
         if (WINDOW) {
-            WINDOW->setInputBlocked(Desktop::View::INPUT_BLOCK_MONOCLE_INACTIVE, false);
-            *WINDOW->alpha(Desktop::View::WINDOW_ALPHA_LAYOUT) = 1.F;
+            WINDOW->setInputBlocked(Desktop::View::FOCUS_BLOCK_MONOCLE_INACTIVE, false);
+            *WINDOW->presentation().alpha(Desktop::View::WINDOW_ALPHA_LAYOUT) = 1.F;
         }
     }
 
@@ -86,8 +88,8 @@ void CMonocleAlgorithm::removeTarget(SP<ITarget> target) {
     // unhide window when removing from monocle layout
     const auto WINDOW = target->window();
     if (WINDOW) {
-        WINDOW->setInputBlocked(Desktop::View::INPUT_BLOCK_MONOCLE_INACTIVE, false);
-        *WINDOW->alpha(Desktop::View::WINDOW_ALPHA_LAYOUT) = 1.F;
+        WINDOW->setInputBlocked(Desktop::View::FOCUS_BLOCK_MONOCLE_INACTIVE, false);
+        *WINDOW->presentation().alpha(Desktop::View::WINDOW_ALPHA_LAYOUT) = 1.F;
     }
 
     const auto INDEX = std::distance(m_targetDatas.begin(), it);
@@ -137,25 +139,32 @@ void CMonocleAlgorithm::recalculate(eRecalculateReason reason) {
         return;
     }
 
+    // Settle visibility for all windows before evaluating workspace rules like w[tv1].
     for (size_t i = 0; i < m_targetDatas.size(); ++i) {
-
         if (!m_targetDatas[i] || !m_targetDatas[i]->target || !m_targetDatas[i]->target->window())
             continue;
 
         const auto& DATA   = m_targetDatas[i];
         const auto  TARGET = DATA->target.lock();
         const auto  WINDOW = TARGET->window();
-        const auto  SPACE  = m_parent->space();
 
-        // Adjust visibility before setting pos so workspace rules like w[tv1] get the correct number of visible windows
-        const bool SHOULD_BE_VISIBLE = ((int)i == m_currentVisibleIndex);
-        WINDOW->setInputBlocked(Desktop::View::INPUT_BLOCK_MONOCLE_INACTIVE, !SHOULD_BE_VISIBLE);
-        *WINDOW->alpha(Desktop::View::WINDOW_ALPHA_LAYOUT) = SHOULD_BE_VISIBLE ? 1.F : 0.F;
+        const bool  SHOULD_BE_VISIBLE = sc<int>(i) == m_currentVisibleIndex;
+        WINDOW->setInputBlocked(Desktop::View::FOCUS_BLOCK_MONOCLE_INACTIVE, !SHOULD_BE_VISIBLE);
+        *WINDOW->presentation().alpha(Desktop::View::WINDOW_ALPHA_LAYOUT) = SHOULD_BE_VISIBLE ? 1.F : 0.F;
+    }
 
-        // Need to update work area for the above change to take affect on work area dimensions
-        SPACE->recheckWorkArea();
-        const auto WORK_AREA = m_parent->space()->workArea();
-        DATA->layoutBox      = WORK_AREA;
+    const auto SPACE = m_parent->space();
+    SPACE->recheckWorkArea();
+    const auto WORK_AREA = SPACE->workArea();
+
+    for (size_t i = 0; i < m_targetDatas.size(); ++i) {
+        if (!m_targetDatas[i] || !m_targetDatas[i]->target || !m_targetDatas[i]->target->window())
+            continue;
+
+        const auto& DATA   = m_targetDatas[i];
+        const auto  TARGET = DATA->target.lock();
+
+        DATA->layoutBox = WORK_AREA;
         TARGET->setPositionGlobal(WORK_AREA);
     }
 }
@@ -216,7 +225,7 @@ void CMonocleAlgorithm::swapTargets(SP<ITarget> a, SP<ITarget> b) {
 }
 
 void CMonocleAlgorithm::moveTargetInDirection(SP<ITarget> t, Math::eDirection dir, bool silent) {
-    static auto PMONITORFALLBACK = CConfigValue<Config::INTEGER>("binds:window_direction_monitor_fallback");
+    static auto PMONITORFALLBACK = CConfigValue<Config::BOOL>("binds:window_direction_monitor_fallback");
 
     if (!*PMONITORFALLBACK)
         return; // noop
@@ -233,9 +242,9 @@ void CMonocleAlgorithm::moveTargetInDirection(SP<ITarget> t, Math::eDirection di
         const auto TARGETWS = PMONINDIR->m_activeWorkspace;
 
         if (t->window())
-            t->window()->setAnimationsToMove();
+            t->window()->presentation().setAnimationsToMove();
 
-        t->assignToSpace(TARGETWS->m_space, focalPointForDir(t, dir));
+        t->assignToSpace(TARGETWS->space(), focalPointForDir(t, dir));
     }
 }
 

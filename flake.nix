@@ -41,6 +41,7 @@
       inputs.systems.follows = "systems";
       inputs.aquamarine.follows = "aquamarine";
       inputs.hyprgraphics.follows = "hyprgraphics";
+      inputs.hyprtoolkit.follows = "hyprtoolkit";
       inputs.hyprutils.follows = "hyprutils";
       inputs.hyprlang.follows = "hyprlang";
       inputs.hyprwayland-scanner.follows = "hyprwayland-scanner";
@@ -51,6 +52,17 @@
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.systems.follows = "systems";
       inputs.hyprutils.follows = "hyprutils";
+    };
+
+    hyprtoolkit = {
+      url = "github:hyprwm/hyprtoolkit";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.systems.follows = "systems";
+      inputs.aquamarine.follows = "aquamarine";
+      inputs.hyprgraphics.follows = "hyprgraphics";
+      inputs.hyprlang.follows = "hyprlang";
+      inputs.hyprutils.follows = "hyprutils";
+      inputs.hyprwayland-scanner.follows = "hyprwayland-scanner";
     };
 
     hyprutils = {
@@ -76,8 +88,11 @@
       url = "github:hyprwm/xdg-desktop-portal-hyprland";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.systems.follows = "systems";
+      inputs.aquamarine.follows = "aquamarine";
+      inputs.hyprgraphics.follows = "hyprgraphics";
       inputs.hyprland-protocols.follows = "hyprland-protocols";
       inputs.hyprlang.follows = "hyprlang";
+      inputs.hyprtoolkit.follows = "hyprtoolkit";
       inputs.hyprutils.follows = "hyprutils";
       inputs.hyprwayland-scanner.follows = "hyprwayland-scanner";
     };
@@ -197,8 +212,33 @@
 
       formatter = eachSystem (system: pkgsFor.${system}.callPackage ./nix/formatter.nix { });
 
-      nixosModules.default = import ./nix/module.nix inputs;
-      homeManagerModules.default = import ./nix/hm-module.nix self;
+      nixosModules.default = {
+        assertions = [
+          {
+            assertion = false;
+            message = ''
+              The Hyprland flake no longer provides a NixOS module.
+              Remove `hyprland.nixosModules.default` from your imports and use the
+              `programs.hyprland` module from nixpkgs instead. Set
+              `programs.hyprland.package` to use the package from this flake.
+            '';
+          }
+        ];
+      };
+
+      homeManagerModules.default = {
+        assertions = [
+          {
+            assertion = false;
+            message = ''
+              The Hyprland flake no longer provides a Home Manager module.
+              Remove `hyprland.homeManagerModules.default` from your imports and use the
+              `wayland.windowManager.hyprland` module from Home Manager instead. Set
+              `wayland.windowManager.hyprland.package` to use the package from this flake.
+            '';
+          }
+        ];
+      };
 
       # Hydra build jobs
       # Recent versions of Hydra can aggregate jobsets from 'hydraJobs' instead of a release.nix

@@ -30,7 +30,7 @@ CForeignToplevelList::CForeignToplevelList(SP<CExtForeignToplevelListV1> resourc
     m_resource->setStop([this](CExtForeignToplevelListV1* h) {
         m_resource->sendFinished();
         m_finished = true;
-        LOGM(Log::DEBUG, "CForeignToplevelList: finished");
+        LOG(Log::DEBUG, "CForeignToplevelList: finished");
     });
 
     for (auto const& w : Desktop::windowState()->windows()) {
@@ -58,19 +58,19 @@ void CForeignToplevelList::onMap(PHLWINDOW pWindow) {
         makeShared<CForeignToplevelHandle>(makeShared<CExtForeignToplevelHandleV1>(m_resource->client(), m_resource->version(), 0), pWindow));
 
     if (!newHandle->good()) {
-        LOGM(Log::ERR, "Couldn't create a foreign handle");
+        LOG(Log::ERR, "Couldn't create a foreign handle");
         m_resource->noMemory();
         PROTO::foreignToplevel->m_handles.pop_back();
         return;
     }
 
-    const auto IDENTIFIER = std::format("{:x}", pWindow->m_stableID);
+    const auto IDENTIFIER = std::format("{:x}", pWindow->metadata().stableID());
 
-    LOGM(Log::DEBUG, "Newly mapped window gets an identifier of {}", IDENTIFIER);
+    LOG(Log::DEBUG, "Newly mapped window gets an identifier of {}", IDENTIFIER);
     m_resource->sendToplevel(newHandle->m_resource.get());
     newHandle->m_resource->sendIdentifier(IDENTIFIER.c_str());
-    newHandle->m_resource->sendAppId(pWindow->m_class.c_str());
-    newHandle->m_resource->sendTitle(pWindow->m_title.c_str());
+    newHandle->m_resource->sendAppId(pWindow->metadata().appID().c_str());
+    newHandle->m_resource->sendTitle(pWindow->metadata().title().c_str());
     newHandle->m_resource->sendDone();
 
     m_handles.emplace_back(std::move(newHandle));
@@ -90,7 +90,7 @@ void CForeignToplevelList::onTitle(PHLWINDOW pWindow) {
     if UNLIKELY (!H || H->m_closed)
         return;
 
-    H->m_resource->sendTitle(pWindow->m_title.c_str());
+    H->m_resource->sendTitle(pWindow->metadata().title().c_str());
     H->m_resource->sendDone();
 }
 
@@ -102,7 +102,7 @@ void CForeignToplevelList::onClass(PHLWINDOW pWindow) {
     if UNLIKELY (!H || H->m_closed)
         return;
 
-    H->m_resource->sendAppId(pWindow->m_class.c_str());
+    H->m_resource->sendAppId(pWindow->metadata().appID().c_str());
     H->m_resource->sendDone();
 }
 
@@ -164,7 +164,7 @@ void CForeignToplevelProtocol::bindManager(wl_client* client, void* data, uint32
     const auto RESOURCE = m_managers.emplace_back(makeUnique<CForeignToplevelList>(makeShared<CExtForeignToplevelListV1>(client, ver, id))).get();
 
     if UNLIKELY (!RESOURCE->good()) {
-        LOGM(Log::ERR, "Couldn't create a foreign list");
+        LOG(Log::ERR, "Couldn't create a foreign list");
         wl_client_post_no_memory(client);
         m_managers.pop_back();
         return;
@@ -180,7 +180,7 @@ void CForeignToplevelProtocol::destroyHandle(CForeignToplevelHandle* handle) {
 }
 
 bool CForeignToplevelProtocol::windowValidForForeign(PHLWINDOW pWindow) {
-    return validMapped(pWindow) && !pWindow->isX11OverrideRedirect();
+    return validMapped(pWindow) && !pWindow->backend().traits().overrideRedirect;
 }
 
 PHLWINDOW CForeignToplevelProtocol::windowFromHandleResource(wl_resource* res) {

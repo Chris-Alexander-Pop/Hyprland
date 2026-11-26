@@ -29,7 +29,7 @@ CToplevelExportClient::CToplevelExportClient(SP<CHyprlandToplevelExportManagerV1
 
 void CToplevelExportClient::captureToplevel(uint32_t frame, int32_t overlayCursor_, PHLWINDOW handle) {
     if UNLIKELY (!handle) {
-        LOGM(Log::ERR, "Couldn't capture (window doesn't exist)");
+        LOG(Log::ERR, "Couldn't capture (window doesn't exist)");
         return;
     }
 
@@ -40,7 +40,7 @@ void CToplevelExportClient::captureToplevel(uint32_t frame, int32_t overlayCurso
         makeShared<CToplevelExportFrame>(makeShared<CHyprlandToplevelExportFrameV1>(m_resource->client(), m_resource->version(), frame), session, !!overlayCursor_));
 
     if UNLIKELY (!FRAME->good()) {
-        LOGM(Log::ERR, "Couldn't alloc frame for sharing! (no memory)");
+        LOG(Log::ERR, "Couldn't alloc frame for sharing! (no memory)");
         m_resource->noMemory();
         PROTO::toplevelExport->destroyResource(FRAME.get());
         return;
@@ -63,11 +63,16 @@ CToplevelExportFrame::CToplevelExportFrame(SP<CHyprlandToplevelExportFrameV1> re
     m_resource->setDestroy([this](CHyprlandToplevelExportFrameV1* pFrame) { PROTO::toplevelExport->destroyResource(this); });
     m_resource->setCopy([this](CHyprlandToplevelExportFrameV1* pFrame, wl_resource* res, int32_t ignoreDamage) { shareFrame(res, !!ignoreDamage); });
 
+    if (!m_session || !m_session->isActive()) {
+        m_resource->sendFailed();
+        return;
+    }
+
     m_frame = m_session->nextFrame(overlayCursor);
 
     auto formats = m_session->allowedFormats();
     if (formats.empty()) {
-        LOGM(Log::ERR, "No format supported by renderer in toplevel export protocol");
+        LOG(Log::ERR, "No format supported by renderer in toplevel export protocol");
         m_resource->sendFailed();
         return;
     }
@@ -78,7 +83,7 @@ CToplevelExportFrame::CToplevelExportFrame(SP<CHyprlandToplevelExportFrameV1> re
     const auto PSHMINFO = getPixelFormatFromDRM(format);
 
     if (!PSHMINFO) {
-        LOGM(Log::ERR, "No pixel format for drm format");
+        LOG(Log::ERR, "No pixel format for drm format");
         m_resource->sendFailed();
         return;
     }
@@ -98,18 +103,18 @@ bool CToplevelExportFrame::good() {
 
 void CToplevelExportFrame::shareFrame(wl_resource* buffer, bool ignoreDamage) {
     if UNLIKELY (!good()) {
-        LOGM(Log::ERR, "No frame in shareFrame??");
+        LOG(Log::ERR, "No frame in shareFrame??");
         return;
     }
 
     if UNLIKELY (m_session.expired() || !m_session->monitor()) {
-        LOGM(Log::ERR, "Session stopped for frame {:x}", (uintptr_t)this);
+        LOG(Log::ERR, "Session stopped for frame {:x}", (uintptr_t)this);
         m_resource->sendFailed();
         return;
     }
 
     if UNLIKELY (m_buffer) {
-        LOGM(Log::ERR, "Buffer used in {:x}", (uintptr_t)this);
+        LOG(Log::ERR, "Buffer used in {:x}", (uintptr_t)this);
         m_resource->error(HYPRLAND_TOPLEVEL_EXPORT_FRAME_V1_ERROR_ALREADY_USED, "frame already used");
         m_resource->sendFailed();
         return;
@@ -117,7 +122,7 @@ void CToplevelExportFrame::shareFrame(wl_resource* buffer, bool ignoreDamage) {
 
     const auto PBUFFERRES = CWLBufferResource::fromResource(buffer);
     if UNLIKELY (!PBUFFERRES || !PBUFFERRES->m_buffer) {
-        LOGM(Log::ERR, "Invalid buffer in {:x}", (uintptr_t)this);
+        LOG(Log::ERR, "Invalid buffer in {:x}", (uintptr_t)this);
         m_resource->error(HYPRLAND_TOPLEVEL_EXPORT_FRAME_V1_ERROR_INVALID_BUFFER, "invalid buffer");
         m_resource->sendFailed();
         return;
@@ -144,7 +149,7 @@ void CToplevelExportFrame::shareFrame(wl_resource* buffer, bool ignoreDamage) {
                 break;
             }
             case RESULT_NOT_COPIED:
-                LOGM(Log::ERR, "Frame share failed in {:x}", (uintptr_t)this);
+                LOG(Log::ERR, "Frame share failed in {:x}", (uintptr_t)this);
                 m_resource->sendFailed();
                 break;
             case RESULT_TIMESTAMP: m_timestamp = Time::steadyNow(); break;
@@ -169,7 +174,7 @@ void CToplevelExportProtocol::bindManager(wl_client* client, void* data, uint32_
     const auto CLIENT = m_clients.emplace_back(makeShared<CToplevelExportClient>(makeShared<CHyprlandToplevelExportManagerV1>(client, ver, id)));
 
     if (!CLIENT->good()) {
-        LOGM(Log::DEBUG, "Failed to bind client! (out of memory)");
+        LOG(Log::DEBUG, "Failed to bind client! (out of memory)");
         wl_client_post_no_memory(client);
         m_clients.pop_back();
         return;
@@ -177,7 +182,7 @@ void CToplevelExportProtocol::bindManager(wl_client* client, void* data, uint32_
 
     CLIENT->m_self = CLIENT;
 
-    LOGM(Log::DEBUG, "Bound client successfully!");
+    LOG(Log::DEBUG, "Bound client successfully!");
 }
 
 void CToplevelExportProtocol::destroyResource(CToplevelExportClient* client) {

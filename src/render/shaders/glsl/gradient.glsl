@@ -6,9 +6,13 @@
 #define GRADIENT_GLSL
 
 vec4 okLabAToSrgb(vec4 lab) {
-    float l = pow(lab[0] + lab[1] * 0.3963377774 + lab[2] * 0.2158037573, 3.0);
-    float m = pow(lab[0] + lab[1] * (-0.1055613458) + lab[2] * (-0.0638541728), 3.0);
-    float s = pow(lab[0] + lab[1] * (-0.0894841775) + lab[2] * (-1.2914855480), 3.0);
+    float l_ = lab[0] + lab[1] * 0.3963377774 + lab[2] * 0.2158037573;
+    float m_ = lab[0] + lab[1] * (-0.1055613458) + lab[2] * (-0.0638541728);
+    float s_ = lab[0] + lab[1] * (-0.0894841775) + lab[2] * (-1.2914855480);
+
+    float l = l_ * l_ * l_;
+    float m = m_ * m_ * m_;
+    float s = s_ * s_ * s_;
 
     return vec4(fromLinearRGB(vec3(l * 4.0767416621 + m * -3.3077115913 + s * 0.2309699292, l * (-1.2684380046) + m * 2.6097574011 + s * (-0.3413193965),
                                    l * (-0.0041960863) + m * (-0.7034186147) + s * 1.7076147010),
@@ -41,11 +45,13 @@ vec4 getOkColorForCoordArray1(vec2 normalizedCoord, int gradientLength, vec4 gra
     float sine     = sin(finalAng);
     float progress = (normalizedCoord[1] * sine + normalizedCoord[0] * (1.0 - sine)) * float(gradientLength - 1);
 
+    if (progress <= 0.0)
+        return gradient[0];
     if (progress >= float(gradientLength - 1))
         return gradient[gradientLength - 1];
 
-    int   bottom = int(floor(progress));
-    int   top    = bottom + 1;
+    int bottom = int(floor(progress));
+    int top    = bottom + 1;
 
     return gradient[top] * (progress - float(bottom)) + gradient[bottom] * (float(top) - progress);
 }
@@ -73,23 +79,30 @@ vec4 getOkColorForCoordArray2(vec2 normalizedCoord, int gradient2Length, vec4 gr
     float sine     = sin(finalAng);
     float progress = (normalizedCoord[1] * sine + normalizedCoord[0] * (1.0 - sine)) * float(gradient2Length - 1);
 
+    if (progress <= 0.0)
+        return gradient2[0];
     if (progress >= float(gradient2Length - 1))
         return gradient2[gradient2Length - 1];
 
-    int   bottom = int(floor(progress));
-    int   top    = bottom + 1;
+    int bottom = int(floor(progress));
+    int top    = bottom + 1;
 
     return gradient2[top] * (progress - float(bottom)) + gradient2[bottom] * (float(top) - progress);
 }
 
-vec4 getColorForCoord(vec2 normalizedCoord, int gradientLength, vec4 gradient[10], float angle, int gradient2Length, vec4 gradient2[10], float angle2, float gradientLerp) {
+vec4 getColorForCoord(vec2 normalizedCoord, vec2 normalizedCoord2, int gradientLength, vec4 gradient[10], float angle, int gradient2Length, vec4 gradient2[10], float angle2,
+                      float gradientLerp) {
     vec4 result1 = getOkColorForCoordArray1(normalizedCoord, gradientLength, gradient, angle);
 
     if (gradient2Length <= 0)
         return okLabAToSrgb(result1);
 
-    vec4 result2 = getOkColorForCoordArray2(normalizedCoord, gradient2Length, gradient2, angle2);
+    vec4 result2 = getOkColorForCoordArray2(normalizedCoord2, gradient2Length, gradient2, angle2);
 
     return okLabAToSrgb(mix(result1, result2, gradientLerp));
+}
+
+vec4 getColorForCoord(vec2 normalizedCoord, int gradientLength, vec4 gradient[10], float angle, int gradient2Length, vec4 gradient2[10], float angle2, float gradientLerp) {
+    return getColorForCoord(normalizedCoord, normalizedCoord, gradientLength, gradient, angle, gradient2Length, gradient2, angle2, gradientLerp);
 }
 #endif

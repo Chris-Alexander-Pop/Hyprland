@@ -9,6 +9,17 @@ project(
   DESCRIPTION "A Modern C++ Wayland Compositor"
   VERSION ${VER})
 
+set(HYPRLAND_TESTS_DEFAULT OFF)
+if(CMAKE_BUILD_TYPE MATCHES Debug OR CMAKE_BUILD_TYPE MATCHES DEBUG)
+  set(HYPRLAND_TESTS_DEFAULT ON)
+endif()
+option(BUILD_TESTING "Build tests" ${HYPRLAND_TESTS_DEFAULT})
+# WITH_TESTS is the project-specific override for CTest's BUILD_TESTING option.
+if(DEFINED WITH_TESTS)
+  set(BUILD_TESTING "${WITH_TESTS}" CACHE BOOL "Build tests" FORCE)
+endif()
+option(WITH_COVERAGE "Enable coverage instrumentation when building tests" ON)
+
 include(CTest)
 include(CheckIncludeFile)
 include(GNUInstallDirs)
@@ -87,11 +98,9 @@ message(
 if(CMAKE_BUILD_TYPE MATCHES Debug OR CMAKE_BUILD_TYPE MATCHES DEBUG)
   message(STATUS "Configuring Hyprland in Debug with CMake")
   add_compile_definitions(HYPRLAND_DEBUG)
-  set(BUILD_TESTING ON)
 else()
   add_compile_options(-O3)
   message(STATUS "Configuring Hyprland in Release with CMake")
-  set(BUILD_TESTING OFF)
 endif()
 
 add_compile_definitions(HYPRLAND_VERSION="${HYPRLAND_VERSION}")
@@ -100,6 +109,11 @@ include_directories(. "src/" "protocols/")
 
 set(CMAKE_CXX_STANDARD 26)
 set(CXX_STANDARD_REQUIRED ON)
+
+# disable module scanning as Hyprland doesn't use C++ modules and the flags
+# added by scanning prevent GCC from using precompiled headers
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+
 add_compile_options(
   -Wall
   -Wextra
@@ -109,10 +123,8 @@ add_compile_options(
   -Wno-unused-parameter
   -Wno-unused-value
   -Wno-missing-field-initializers
-  -Wno-gnu-zero-variadic-macro-arguments
   -Wno-narrowing
   -Wno-pointer-arith
-  -Wno-clobbered
   -frtti
   -fmacro-prefix-map=${CMAKE_SOURCE_DIR}/=)
 
@@ -128,30 +140,29 @@ find_package(Threads REQUIRED)
 
 set(GLES_VERSION "GLES3")
 find_package(OpenGL REQUIRED COMPONENTS ${GLES_VERSION})
-find_package(glslang CONFIG REQUIRED)
 
-find_package(glaze 7...<8 QUIET)
-if(NOT glaze_FOUND)
-  set(GLAZE_VERSION v7.2.0)
-  message(STATUS "glaze dependency not found, retrieving ${GLAZE_VERSION} with FetchContent")
-  include(FetchContent)
-  FetchContent_Declare(
-    glaze
-    GIT_REPOSITORY https://github.com/stephenberry/glaze.git
-    GIT_TAG ${GLAZE_VERSION}
-    GIT_SHALLOW TRUE
-    EXCLUDE_FROM_ALL)
-  FetchContent_MakeAvailable(glaze)
+find_package(glaze QUIET)
+if(NOT CMAKE_SYSTEM_NAME MATCHES "OpenBSD")
+  if(NOT glaze_FOUND)
+    set(GLAZE_VERSION v7.2.0)
+    message(STATUS "glaze dependency not found, retrieving ${GLAZE_VERSION} with FetchContent")
+    include(FetchContent)
+    FetchContent_Declare(
+      glaze
+      GIT_REPOSITORY https://github.com/stephenberry/glaze.git
+      GIT_TAG ${GLAZE_VERSION}
+      GIT_SHALLOW TRUE
+      EXCLUDE_FROM_ALL)
+    FetchContent_MakeAvailable(glaze)
+  endif()
 endif()
 
-set(AQUAMARINE_MINIMUM_VERSION 0.9.3)
-set(HYPRLANG_MINIMUM_VERSION 0.6.7)
+set(AQUAMARINE_MINIMUM_VERSION 0.15.0)
 set(HYPRCURSOR_MINIMUM_VERSION 0.1.7)
-set(HYPRUTILS_MINIMUM_VERSION 0.14.0)
+set(HYPRUTILS_MINIMUM_VERSION 0.14.3)
 set(HYPRGRAPHICS_MINIMUM_VERSION 0.5.1)
 
 pkg_check_modules(aquamarine_dep REQUIRED IMPORTED_TARGET aquamarine>=${AQUAMARINE_MINIMUM_VERSION})
-pkg_check_modules(hyprlang_dep REQUIRED IMPORTED_TARGET hyprlang>=${HYPRLANG_MINIMUM_VERSION})
 pkg_check_modules(hyprcursor_dep REQUIRED IMPORTED_TARGET hyprcursor>=${HYPRCURSOR_MINIMUM_VERSION})
 pkg_check_modules(hyprutils_dep REQUIRED IMPORTED_TARGET hyprutils>=${HYPRUTILS_MINIMUM_VERSION})
 pkg_check_modules(hyprgraphics_dep REQUIRED IMPORTED_TARGET hyprgraphics>=${HYPRGRAPHICS_MINIMUM_VERSION})
@@ -165,7 +176,6 @@ set(AQUAMARINE_VERSION "${aquamarine_dep_VERSION}")
 set(AQUAMARINE_VERSION_MAJOR "${AQ_VERSION_MAJOR}")
 set(AQUAMARINE_VERSION_MINOR "${AQ_VERSION_MINOR}")
 set(AQUAMARINE_VERSION_PATCH "${AQ_VERSION_PATCH}")
-set(HYPRLANG_VERSION "${hyprlang_dep_VERSION}")
 set(HYPRUTILS_VERSION "${hyprutils_dep_VERSION}")
 set(HYPRCURSOR_VERSION "${hyprcursor_dep_VERSION}")
 set(HYPRGRAPHICS_VERSION "${hyprgraphics_dep_VERSION}")
@@ -286,6 +296,7 @@ pkg_check_modules(deps
   re2
   muparser
   lcms2
+  libcanberra
 )
 
 pkg_search_module(LUA REQUIRED IMPORTED_TARGET GLOBAL lua55 lua5.5 lua-55 lua-5.5 lua>=5.5 lua<5.6)
@@ -375,13 +386,8 @@ if(NOT HAS_INOTIFY AND inotify_FOUND)
   target_link_libraries(hyprland_lib PUBLIC PkgConfig::inotify)
 endif()
 
-# sdbus-c++ is used to ask rtkit for realtime scheduling which is Linux-only
-if(NO_RTKIT OR NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  message(STATUS "rtkit realtime scheduling is disabled!")
-else()
-  pkg_check_modules(sdbus_dep REQUIRED IMPORTED_TARGET sdbus-c++>=2.0.0)
-  target_link_libraries(hyprland_lib PUBLIC PkgConfig::sdbus_dep)
-  add_compile_definitions(HAS_RTKIT)
+if(DEFINED NO_RTKIT)
+  message(STATUS "NO_RTKIT=${NO_RTKIT} is obsolete: Hyprland no longer acquires realtime scheduling")
 endif()
 
 if(NO_XWAYLAND)
@@ -418,6 +424,9 @@ else()
   message(STATUS "SYSTEMD support is requested (NO_SYSTEMD not defined)...")
   add_compile_definitions(USES_SYSTEMD)
 
+  install(FILES ${CMAKE_SOURCE_DIR}/systemd/hyprland-session.target
+          DESTINATION ${CMAKE_INSTALL_LIBDIR}/systemd/user)
+
   # session file -uwsm
   if(NO_UWSM)
     message(STATUS "UWSM support is disabled...")
@@ -446,7 +455,6 @@ target_link_libraries(
   hyprland_lib
   PUBLIC
   PkgConfig::aquamarine_dep
-  PkgConfig::hyprlang_dep
   PkgConfig::hyprutils_dep
   PkgConfig::hyprcursor_dep
   PkgConfig::hyprgraphics_dep
@@ -533,19 +541,14 @@ function(protocolWayland)
 endfunction()
 
 if(TARGET OpenGL::GL)
-  target_link_libraries(hyprland_lib PUBLIC OpenGL::EGL OpenGL::GL glslang::glslang glslang::glslang-default-resource-limits glslang::SPIRV Threads::Threads)
+  target_link_libraries(hyprland_lib PUBLIC OpenGL::EGL OpenGL::GL Threads::Threads)
 else()
-  target_link_libraries(hyprland_lib PUBLIC OpenGL::EGL OpenGL::GLES3 glslang::glslang glslang::glslang-default-resource-limits glslang::SPIRV Threads::Threads)
+  target_link_libraries(hyprland_lib PUBLIC OpenGL::EGL OpenGL::GLES3 Threads::Threads)
 endif()
 
-pkg_check_modules(hyprland_protocols_dep hyprland-protocols>=0.7.0)
-if(hyprland_protocols_dep_FOUND)
-  pkg_get_variable(HYPRLAND_PROTOCOLS hyprland-protocols pkgdatadir)
-  message(STATUS "hyprland-protocols dependency set to ${HYPRLAND_PROTOCOLS}")
-else()
-  set(HYPRLAND_PROTOCOLS "subprojects/hyprland-protocols")
-  message(STATUS "hyprland-protocols subproject set to ${HYPRLAND_PROTOCOLS}")
-endif()
+pkg_check_modules(hyprland_protocols_dep REQUIRED hyprland-protocols>=0.8.0)
+pkg_get_variable(HYPRLAND_PROTOCOLS hyprland-protocols pkgdatadir)
+message(STATUS "hyprland-protocols dependency set to ${HYPRLAND_PROTOCOLS}")
 
 protocolnew("${HYPRLAND_PROTOCOLS}/protocols" "hyprland-global-shortcuts-v1"
             true)
@@ -562,6 +565,7 @@ protocolnew("protocols" "input-method-unstable-v2" true)
 protocolnew("protocols" "wlr-output-management-unstable-v1" true)
 protocolnew("protocols" "kde-server-decoration" true)
 protocolnew("protocols" "vicinae-hotkey-v1" true)
+protocolnew("protocols" "xx-hotkey-v1" true)
 protocolnew("protocols" "wlr-data-control-unstable-v1" true)
 protocolnew("${HYPRLAND_PROTOCOLS}/protocols" "hyprland-focus-grab-v1" true)
 protocolnew("protocols" "wlr-layer-shell-unstable-v1" true)
@@ -569,8 +573,8 @@ protocolnew("protocols" "wayland-drm" true)
 protocolnew("${HYPRLAND_PROTOCOLS}/protocols" "hyprland-ctm-control-v1" true)
 protocolnew("${HYPRLAND_PROTOCOLS}/protocols" "hyprland-surface-v1" true)
 protocolnew("${HYPRLAND_PROTOCOLS}/protocols" "hyprland-lock-notify-v1" true)
-protocolnew("${HYPRLAND_PROTOCOLS}/protocols" "hyprland-toplevel-mapping-v1"
-            true)
+protocolnew("${HYPRLAND_PROTOCOLS}/protocols" "hyprland-toplevel-mapping-v1" true)
+protocolnew("${HYPRLAND_PROTOCOLS}/protocols" "hyprland-workspace-image-capture-source-v1" true)
 
 protocolnew("staging/tearing-control" "tearing-control-v1" false)
 protocolnew("staging/fractional-scale" "fractional-scale-v1" false)
@@ -606,6 +610,7 @@ protocolnew("staging/single-pixel-buffer" "single-pixel-buffer-v1" false)
 protocolnew("staging/security-context" "security-context-v1" false)
 protocolnew("staging/content-type" "content-type-v1" false)
 protocolnew("staging/color-management" "color-management-v1" false)
+protocolnew("staging/color-representation" "color-representation-v1" false)
 protocolnew("staging/xdg-toplevel-tag" "xdg-toplevel-tag-v1" false)
 protocolnew("staging/xdg-system-bell" "xdg-system-bell-v1" false)
 protocolnew("staging/ext-workspace" "ext-workspace-v1" false)
@@ -638,15 +643,21 @@ set(CMAKE_INSTALL_DEFAULT_DIRECTORY_PERMISSIONS
     GROUP_READ GROUP_EXECUTE
     WORLD_READ WORLD_EXECUTE)
 
-# binary and symlink
+# binary
 install(TARGETS Hyprland)
-
+# symlink: create link at install time, install it, and clean it up
 install(
   CODE "execute_process( \
         COMMAND ${CMAKE_COMMAND} -E create_symlink \
         ${CMAKE_INSTALL_FULL_BINDIR}/Hyprland \
-        \"\$ENV{DESTDIR}${CMAKE_INSTALL_FULL_BINDIR}/hyprland\" \
+        ${CMAKE_CURRENT_BINARY_DIR}/hyprland.link \
         )")
+install(
+  FILES ${CMAKE_CURRENT_BINARY_DIR}/hyprland.link
+  DESTINATION ${CMAKE_INSTALL_FULL_BINDIR}
+  RENAME hyprland)
+install(CODE "file(REMOVE ${CMAKE_CURRENT_BINARY_DIR}/hyprland.link)")
+
 # session file
 configure_file(
     ${CMAKE_SOURCE_DIR}/example/hyprland.desktop.in
@@ -702,7 +713,7 @@ install(
   PATTERN "*.hpp"
   PATTERN "*.inc")
 
-if(BUILD_TESTING OR WITH_TESTS)
+if(BUILD_TESTING)
   message(STATUS "Building tests")
 
   # hyprtester
@@ -713,8 +724,6 @@ if(BUILD_TESTING OR WITH_TESTS)
   include(GoogleTest)
   file(GLOB_RECURSE TESTFILES "tests/*.cpp")
   add_executable(hyprland_gtests ${TESTFILES})
-  target_compile_options(hyprland_gtests PRIVATE --coverage)
-  target_link_options(hyprland_gtests PRIVATE --coverage)
   target_include_directories(
     hyprland_gtests
     PUBLIC "./include"
@@ -724,15 +733,20 @@ if(BUILD_TESTING OR WITH_TESTS)
 
   gtest_discover_tests(hyprland_gtests)
 
-  # Enable coverage in main hyprland lib
-  target_compile_options(hyprland_lib PRIVATE --coverage)
-  target_link_options(hyprland_lib PRIVATE --coverage)
-  target_link_libraries(hyprland_lib PUBLIC gcov)
+  if(WITH_COVERAGE)
+    target_compile_options(hyprland_gtests PRIVATE --coverage)
+    target_link_options(hyprland_gtests PRIVATE --coverage)
 
-  # Enable coverage in hyprland exe
-  target_compile_options(Hyprland PRIVATE --coverage)
-  target_link_options(Hyprland PRIVATE --coverage)
-  target_link_libraries(Hyprland gcov)
+    # Enable coverage in main hyprland lib
+    target_compile_options(hyprland_lib PRIVATE --coverage)
+    target_link_options(hyprland_lib PRIVATE --coverage)
+    target_link_libraries(hyprland_lib PUBLIC gcov)
+
+    # Enable coverage in hyprland exe
+    target_compile_options(Hyprland PRIVATE --coverage)
+    target_link_options(Hyprland PRIVATE --coverage)
+    target_link_libraries(Hyprland gcov)
+  endif()
 endif()
 
 if(BUILD_TESTING)
@@ -741,7 +755,7 @@ if(BUILD_TESTING)
   enable_testing()
   add_custom_target(tests)
 
-  add_dependencies(tests hyprland_gtests)
+  add_dependencies(tests hyprland_gtests start-hyprland)
 
 else()
   message(STATUS "Testing is disabled")

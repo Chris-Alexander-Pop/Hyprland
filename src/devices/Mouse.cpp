@@ -10,7 +10,7 @@ SP<CMouse> CMouse::create(SP<Aquamarine::IPointer> mouse) {
     return pMouse;
 }
 
-CMouse::CMouse(SP<Aquamarine::IPointer> mouse_) : m_mouse(mouse_) {
+CMouse::CMouse(SP<Aquamarine::IPointer> mouse_) : IPointer(mouse_ ? mouse_->getLibinputHandle() : nullptr), m_mouse(mouse_) {
     if (!m_mouse)
         return;
 
@@ -39,6 +39,8 @@ CMouse::CMouse(SP<Aquamarine::IPointer> mouse_) : m_mouse(mouse_) {
             .timeMs   = event.timeMs,
             .absolute = event.absolute,
             .device   = m_self.lock(),
+            .output   = event.output,
+            .mouse    = true,
         });
     });
 
@@ -128,7 +130,7 @@ CMouse::CMouse(SP<Aquamarine::IPointer> mouse_) : m_mouse(mouse_) {
     m_deviceName = m_mouse->getName();
 }
 
-bool CMouse::isVirtual() {
+bool CMouse::isVirtual() const {
     return false;
 }
 

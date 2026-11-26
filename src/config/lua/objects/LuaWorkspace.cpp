@@ -5,17 +5,22 @@
 #include "LuaObjectHelpers.hpp"
 
 #include "../../../managers/fullscreen/FullscreenController.hpp"
-#include "../../../desktop/Workspace.hpp"
+#include "../../../workspace/HLWorkspace.hpp"
 #include "../../../desktop/view/Group.hpp"
+#include "../../../desktop/view/window/WindowGroupMembership.hpp"
 #include "../../../output/Monitor.hpp"
 #include "../../../layout/space/Space.hpp"
 #include "../../../layout/algorithm/Algorithm.hpp"
 #include "../../../layout/algorithm/TiledAlgorithm.hpp"
 #include "../../../layout/supplementary/WorkspaceAlgoMatcher.hpp"
+#include "../../../workspace/RegularWorkspace.hpp"
 #include "../../../Compositor.hpp"
+#include "workspace/AbstractWorkspace.hpp"
 
 #include <algorithm>
+#include <lua.h>
 #include <string_view>
+#include <variant>
 
 using namespace Config::Lua;
 
@@ -34,10 +39,10 @@ static int workspaceToString(lua_State* L) {
     const auto* ref = sc<PHLWORKSPACEREF*>(luaL_checkudata(L, 1, MT));
     const auto  ws  = ref->lock();
 
-    if (!ws || ws->inert())
+    if (!ws)
         lua_pushstring(L, "HL.Workspace(expired)");
     else
-        lua_pushfstring(L, "HL.Workspace(%d:%s)", ws->m_id, ws->m_name.c_str());
+        lua_pushfstring(L, "HL.Workspace(%s:%s)", ws->addressableName().c_str(), ws->displayName().c_str());
 
     return 1;
 }
@@ -45,7 +50,7 @@ static int workspaceToString(lua_State* L) {
 static int workspaceGetWindows(lua_State* L) {
     auto*      ref = sc<PHLWORKSPACEREF*>(luaL_checkudata(L, 1, MT));
     const auto ws  = ref->lock();
-    if (!ws || ws->inert()) {
+    if (!ws) {
         lua_newtable(L);
         return 1;
     }
@@ -64,7 +69,7 @@ static int workspaceGetWindows(lua_State* L) {
 static int workspaceGetGroups(lua_State* L) {
     auto*      ref = sc<PHLWORKSPACEREF*>(luaL_checkudata(L, 1, MT));
     const auto ws  = ref->lock();
-    if (!ws || ws->inert()) {
+    if (!ws) {
         lua_newtable(L);
         return 1;
     }
@@ -75,15 +80,15 @@ static int workspaceGetGroups(lua_State* L) {
     std::vector<Desktop::View::CGroup*> pushedGroups;
 
     for (auto const& w : Desktop::windowState()->windows()) {
-        if (w->m_workspace != ws || !w->m_group)
+        if (w->m_workspace != ws || !w->grouping().group())
             continue;
 
-        if (std::ranges::find(pushedGroups, w->m_group.get()) != pushedGroups.end())
+        if (std::ranges::find(pushedGroups, w->grouping().group().get()) != pushedGroups.end())
             continue;
 
-        pushedGroups.push_back(w->m_group.get());
+        pushedGroups.push_back(w->grouping().group().get());
 
-        Objects::CLuaGroup::push(L, w->m_group);
+        Objects::CLuaGroup::push(L, w->grouping().group());
 
         lua_rawseti(L, -2, idx++);
     }
@@ -94,19 +99,27 @@ static int workspaceGetGroups(lua_State* L) {
 static int workspaceIndex(lua_State* L) {
     auto*      ref = sc<PHLWORKSPACEREF*>(luaL_checkudata(L, 1, MT));
     const auto ws  = ref->lock();
-    if (!ws || ws->inert()) {
-        Log::logger->log(Log::DEBUG, "[lua] Tried to access an expired object");
+    if (!ws) {
+        LOG(Log::DEBUG, "[lua] Tried to access an expired object");
         lua_pushnil(L);
         return 1;
     }
 
     const std::string_view key = luaL_checkstring(L, 2);
 
-    if (key == "id")
-        lua_pushinteger(L, sc<lua_Integer>(ws->m_id));
-    else if (key == "name")
-        lua_pushstring(L, ws->m_name.c_str());
-    else if (key == "monitor") {
+    if (key == "name")
+        lua_pushstring(L, ws->displayName().c_str());
+    else if (key == "addressable_name")
+        lua_pushstring(L, ws->addressableName().c_str());
+    else if (key == "id") {
+        // for compatibility under lua, keep this field populated with a numbered ID if there is one,
+        // or nil
+        auto id = ws->id();
+        if (std::holds_alternative<Workspace::SWorkspaceNumberedID>(id))
+            lua_pushinteger(L, std::get<Workspace::SWorkspaceNumberedID>(id).value);
+        else
+            lua_pushnil(L);
+    } else if (key == "monitor") {
         const auto mon = ws->m_monitor.lock();
         if (mon)
             Objects::CLuaMonitor::push(L, mon);
@@ -115,9 +128,9 @@ static int workspaceIndex(lua_State* L) {
     } else if (key == "windows")
         lua_pushinteger(L, sc<lua_Integer>(ws->getWindowCount()));
     else if (key == "visible")
-        lua_pushboolean(L, ws->isVisible());
+        lua_pushboolean(L, ws->visible());
     else if (key == "special")
-        lua_pushboolean(L, ws->m_isSpecialWorkspace);
+        lua_pushboolean(L, ws->type() == Workspace::eWorkspaceType::SPECIAL);
     else if (key == "active") {
         const auto mon = ws->m_monitor.lock();
         lua_pushboolean(L, mon && (mon->m_activeWorkspace == ws || mon->m_activeSpecialWorkspace == ws));
@@ -127,21 +140,21 @@ static int workspaceIndex(lua_State* L) {
         lua_pushinteger(L, sc<lua_Integer>(Fullscreen::controller()->getFullscreenModes(ws).internal));
     else if (key == "has_fullscreen")
         lua_pushboolean(L, Fullscreen::controller()->hasFullscreen(ws));
-    else if (key == "is_persistent")
-        lua_pushboolean(L, ws->isPersistent());
-    else if (key == "is_empty")
+    else if (key == "is_persistent") {
+        const auto REGULAR = dynamicPointerCast<Workspace::CRegularWorkspace>(ws);
+        lua_pushboolean(L, REGULAR && REGULAR->isPersistent());
+    } else if (key == "is_empty")
         lua_pushboolean(L, ws->getWindowCount() == 0);
-    else if (key == "config_name")
-        lua_pushstring(L, ws->getConfigName().c_str());
     else if (key == "tiled_layout") {
         std::string layoutName = "unknown";
-        if (ws->m_space && ws->m_space->algorithm() && ws->m_space->algorithm()->tiledAlgo()) {
-            const auto& TILED_ALGO = ws->m_space->algorithm()->tiledAlgo();
+        const auto& SPACE      = ws->space();
+        if (SPACE && SPACE->algorithm() && SPACE->algorithm()->tiledAlgo()) {
+            const auto& TILED_ALGO = SPACE->algorithm()->tiledAlgo();
             layoutName             = Layout::Supplementary::algoMatcher()->getNameForTiledAlgo(TILED_ALGO.get());
         }
         lua_pushstring(L, layoutName.c_str());
     } else if (key == "last_window") {
-        const auto lastWindow = ws->m_lastFocusedWindow.lock();
+        const auto lastWindow = ws->getLastFocusedWindow();
         if (lastWindow)
             Objects::CLuaWindow::push(L, lastWindow);
         else
@@ -169,12 +182,22 @@ void Objects::CLuaWorkspace::setup(lua_State* L) {
 }
 
 void Objects::CLuaWorkspace::push(lua_State* L, PHLWORKSPACE ws) {
+    if (!ws) {
+        lua_pushnil(L);
+        return;
+    }
+
     new (lua_newuserdata(L, sizeof(PHLWORKSPACEREF))) PHLWORKSPACEREF(ws ? ws->m_self : nullptr);
     luaL_getmetatable(L, MT);
     lua_setmetatable(L, -2);
 }
 
 void Objects::CLuaWorkspace::push(lua_State* L, PHLWORKSPACEREF ws) {
+    if (!ws) {
+        lua_pushnil(L);
+        return;
+    }
+
     new (lua_newuserdata(L, sizeof(PHLWORKSPACEREF))) PHLWORKSPACEREF(ws ? ws->m_self : nullptr);
     luaL_getmetatable(L, MT);
     lua_setmetatable(L, -2);

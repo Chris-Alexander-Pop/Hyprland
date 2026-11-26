@@ -3,6 +3,7 @@
 #include "IHID.hpp"
 #include "../macros.hpp"
 #include "../helpers/math/Math.hpp"
+#include "../input/Keys.hpp"
 
 #include <optional>
 #include <xkbcommon/xkbcommon.h>
@@ -10,23 +11,12 @@
 
 AQUAMARINE_FORWARD(IKeyboard);
 
-enum eKeyboardModifiers {
-    HL_MODIFIER_SHIFT = (1 << 0),
-    HL_MODIFIER_CAPS  = (1 << 1),
-    HL_MODIFIER_CTRL  = (1 << 2),
-    HL_MODIFIER_ALT   = (1 << 3),
-    HL_MODIFIER_MOD2  = (1 << 4),
-    HL_MODIFIER_MOD3  = (1 << 5),
-    HL_MODIFIER_META  = (1 << 6),
-    HL_MODIFIER_MOD5  = (1 << 7),
-};
-
 class IKeyboard : public IHID {
   public:
     virtual ~IKeyboard();
     virtual uint32_t   getCapabilities();
     virtual eHIDType   getType();
-    virtual bool       isVirtual() = 0;
+    virtual bool       isVirtual() const = 0;
     virtual wl_client* getClient() {
         return nullptr;
     };
@@ -72,7 +62,7 @@ class IKeyboard : public IHID {
     std::optional<uint32_t>           getLEDs();
     void                              updateLEDs();
     void                              updateLEDs(uint32_t leds);
-    uint32_t                          getModifiers();
+    Input::ModifierMask               getModifiers();
     void                              updateModifiers(uint32_t depressed, uint32_t latched, uint32_t locked, uint32_t group);
     bool                              updateModifiersState(); // rets whether changed
     void                              updateXkbStateWithKey(uint32_t xkbKey, bool pressed);
@@ -124,6 +114,9 @@ class IKeyboard : public IHID {
     bool                           m_resolveBindsBySym = false;
 
     WP<IKeyboard>                  m_self;
+
+  protected:
+    using IHID::IHID;
 
   private:
     void                  clearManuallyAllocd();

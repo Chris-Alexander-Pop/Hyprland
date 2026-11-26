@@ -97,6 +97,13 @@ void CConfigWatcher::onInotifyEvent() {
             break;
         }
 
+        // rm_watch queues IN_IGNORED. Those descriptors are already gone, and a
+        // reused number can belong to a watch we just added.
+        if (ev->mask & IN_IGNORED) {
+            offset += sizeof(inotify_event) + ev->len;
+            continue;
+        }
+
         const auto WD = std::ranges::find_if(m_watches, [wd = ev->wd](const auto& e) { return e.wd == wd; });
 
         if (WD == m_watches.end())

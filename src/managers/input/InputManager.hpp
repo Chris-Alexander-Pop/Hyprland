@@ -93,7 +93,10 @@ class CInputManager {
     CInputManager();
     ~CInputManager();
 
-    void               onMouseMoved(IPointer::SMotionEvent);
+    void onMouseMoved(IPointer::SMotionEvent);
+    bool mouseButtonHeld() const {
+        return !m_currentlyHeldButtons.empty();
+    }
     void               onMouseWarp(IPointer::SMotionAbsoluteEvent);
     void               onMouseButton(IPointer::SButtonEvent, SP<IPointer>);
     void               onMouseWheel(IPointer::SAxisEvent, SP<IPointer> pointer = nullptr);

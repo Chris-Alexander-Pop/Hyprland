@@ -264,6 +264,43 @@ void CInputManager::sendMotionEventsToFocused() {
     g_pSeatManager->setPointerFocus(surface, local);
 }
 
+// Topmost overlay or top layer under the cursor, when it is on-demand.
+// A hit on any other layer stops the search so a sheet underneath is not focused through it.
+static bool onDemandLayerAt(const Vector2D& coords, SP<CWLSurfaceResource>* surf, Vector2D* local) {
+    const auto PMONITOR = State::monitorState()->query().vec(coords).run();
+    if (!PMONITOR)
+        return false;
+
+    enum class ePick : uint8_t {
+        MISS = 0,
+        OTHER,
+        ON_DEMAND,
+    };
+
+    auto consider = [&](std::vector<PHLLSREF>* list) -> ePick {
+        Vector2D surfaceCoords;
+        PHLLS    layer;
+        auto     found = Desktop::viewState()->hitTest().layerSurfaceAt(coords, list, &surfaceCoords, &layer);
+        if (!found || !layer)
+            return ePick::MISS;
+        if (layer->m_keyboardInteractivity != ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_ON_DEMAND)
+            return ePick::OTHER;
+
+        if (surf)
+            *surf = found;
+        if (local)
+            *local = surfaceCoords;
+        return ePick::ON_DEMAND;
+    };
+
+    const ePick OVERLAY = consider(&PMONITOR->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY]);
+    if (OVERLAY == ePick::ON_DEMAND)
+        return true;
+    if (OVERLAY == ePick::OTHER)
+        return false;
+    return consider(&PMONITOR->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_TOP]) == ePick::ON_DEMAND;
+}
+
 void CInputManager::mouseMoveUnified(uint32_t time, bool refocus, bool mouse, std::optional<Vector2D> overridePos, bool pointerOnly) {
     if (!pointerOnly)
         m_lastInputMouse = mouse;
@@ -409,9 +446,11 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus, bool mouse, st
 
     // if we are holding a pointer button,
     // and we're not dnd-ing, don't refocus. Keep focus on last surface.
+    // A click over an on-demand layer must retarget. Sticking to the window under the cursor
+    // would drop the keyboard focus the press just gave the layer.
     if (!overridePos.has_value() && !PROTO::data->dndActive() && !m_currentlyHeldButtons.empty() && Desktop::focusState()->surface() &&
-        Desktop::focusState()->surface()->m_mapped && g_pSeatManager->m_state.pointerFocus && !m_hardInput &&
-        !(LayerPointerHold::enabled() && LayerPointerHold::layerMapped())) {
+        Desktop::focusState()->surface()->m_mapped && g_pSeatManager->m_state.pointerFocus && !m_hardInput && !(LayerPointerHold::enabled() && LayerPointerHold::layerMapped()) &&
+        !onDemandLayerAt(mouseCoords, nullptr, nullptr)) {
         foundSurface = g_pSeatManager->m_state.pointerFocus.lock();
 
         // IME popups aren't desktop-like elements
@@ -734,10 +773,10 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus, bool mouse, st
             Pointer::Cursor::overrideController->unsetOverride(Pointer::Cursor::CURSOR_OVERRIDE_WINDOW_EDGE);
         }
 
-        if (pFoundLayerSurface && (pFoundLayerSurface->m_layerSurface->m_current.keyboardInteractivity != ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE) && FOLLOWMOUSE != 3 &&
-            (allowKeyboardRefocus || pFoundLayerSurface->m_layerSurface->m_current.keyboardInteractivity == ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE)) {
+        // Hover focuses exclusive sheets only. On-demand waits for a click,
+        // so a large overlay does not blur the client while the pointer crosses it.
+        if (pFoundLayerSurface && pFoundLayerSurface->m_layerSurface->m_current.keyboardInteractivity == ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE && FOLLOWMOUSE != 3)
             Desktop::focusState()->rawSurfaceFocus(foundSurface);
-        }
 
         if (pFoundLayerSurface)
             m_lastFocusOnLS = true;
@@ -885,6 +924,19 @@ void CInputManager::setClickMode(eClickBehaviorMode mode) {
     }
 }
 
+// On-demand layers get the keyboard when the user clicks them. Hover does not.
+// Pointer focus moves with the click so the button is not delivered to the window underneath.
+static void focusOnDemandLayerAt(const Vector2D& coords) {
+    SP<CWLSurfaceResource> surf;
+    Vector2D               local;
+    if (!onDemandLayerAt(coords, &surf, &local))
+        return;
+
+    if (g_pSeatManager->m_state.keyboardFocus != surf)
+        Desktop::focusState()->rawSurfaceFocus(surf);
+    g_pSeatManager->setPointerFocus(surf, local);
+}
+
 void CInputManager::processMouseDownNormal(const IPointer::SButtonEvent& e, SP<IPointer> mouse) {
 
     // notify the keybind manager
@@ -980,6 +1032,11 @@ void CInputManager::processMouseDownNormal(const IPointer::SButtonEvent& e, SP<I
         swallowed = std::erase_if(m_swallowedFocusButtons, [&](const auto& b) { return b.button == e.button && b.pointer == mouse; });
 
     if (!swallowed) {
+        // After mouseMoveUnified. A held button otherwise sticks pointer focus to the window
+        // under the cursor and that path takes the keyboard back.
+        if (e.state == WL_POINTER_BUTTON_STATE_PRESSED)
+            focusOnDemandLayerAt(mouseCoords);
+
         // notify app if we didn't handle it
         g_pSeatManager->sendPointerButton(e.timeMs, e.button, e.state);
     }

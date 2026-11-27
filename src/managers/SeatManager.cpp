@@ -405,6 +405,45 @@ void CSeatManager::bindPointerFocusResource(SP<CWLSurfaceResource> surf) {
 
 static WP<CWLSurfaceResource> g_holdOverlay;
 
+static bool                   holdOverlayButtonsDown() {
+    return g_holdOverlay && g_pInputManager && g_pInputManager->mouseButtonHeld();
+}
+
+// A press on the overlay grabs the pointer. Leaving the surface must not
+// send leave: sendLeave releases every button, so a resize dies as soon as
+// the cursor crosses the edge the user is dragging.
+void CSeatManager::deliverHoldGrabMotion(uint32_t timeMs, const Vector2D& global) {
+    const auto ov = g_holdOverlay.lock();
+    if (!ov)
+        return;
+
+    Vector2D local;
+    if (const auto hl = Desktop::View::CWLSurface::fromResource(ov); hl)
+        if (const auto box = hl->getSurfaceBoxGlobal(); box)
+            local = global - box->pos();
+
+    sendPointerMotionOnClient(ov->client(), timeMs, local);
+    sendPointerFrameOnClient(ov->client());
+}
+
+void CSeatManager::deliverHoldGrabButton(uint32_t timeMs, uint32_t key, wl_pointer_button_state state_) {
+    const auto ov = g_holdOverlay.lock();
+    if (!ov)
+        return;
+
+    for (auto const& p : PROTO::seat->m_pointers) {
+        if (!p || !p->m_owner || p->m_owner->client() != ov->client())
+            continue;
+        p->sendButton(timeMs, key, state_);
+    }
+    sendPointerFrameOnClient(ov->client());
+
+    // The button list is updated before this runs, so a clear list means the
+    // physical release just landed. Leave only then.
+    if (!g_pInputManager || !g_pInputManager->mouseButtonHeld())
+        resetHoldOverlay();
+}
+
 void CSeatManager::resetHoldOverlay() {
     if (auto old = g_holdOverlay.lock()) {
         sendPointerLeaveOnClient(old->client());
@@ -616,6 +655,10 @@ void CSeatManager::sendPointerMotion(uint32_t timeMs, const Vector2D& local) {
             LayerPointerHold::notePos(global);
             return;
         }
+        if (holdOverlayButtonsDown()) {
+            deliverHoldGrabMotion(timeMs, global);
+            return;
+        }
         if (g_holdOverlay) {
             resetHoldOverlay();
             if (g_pHyprRenderer)
@@ -639,6 +682,10 @@ void CSeatManager::sendPointerMotion(uint32_t timeMs, const Vector2D& local) {
                     sendPointerFrameOnClient(b->client());
                 }
             }
+            return;
+        }
+        if (holdOverlayButtonsDown()) {
+            deliverHoldGrabMotion(timeMs, global);
             return;
         }
         if (g_holdOverlay)
@@ -685,8 +732,11 @@ void CSeatManager::sendPointerButton(uint32_t timeMs, uint32_t key, wl_pointer_b
             LayerPointerHold::debugLog(std::format("button overlay state={} at {:.0f},{:.0f}", sc<int>(state_), global.x, global.y));
             return;
         }
-        if (g_holdOverlay)
-            resetHoldOverlay();
+        if (g_holdOverlay) {
+            deliverHoldGrabButton(timeMs, key, state_);
+            LayerPointerHold::debugLog(std::format("button grab state={} at {:.0f},{:.0f}", sc<int>(state_), global.x, global.y));
+            return;
+        }
 
         LayerPointerHold::debugLog(std::format("button outside layer state={} at {:.0f},{:.0f}", sc<int>(state_), global.x, global.y));
         return;
@@ -703,6 +753,10 @@ void CSeatManager::sendPointerButton(uint32_t timeMs, uint32_t key, wl_pointer_b
                     continue;
                 p->sendButton(timeMs, key, state_);
             }
+            return;
+        }
+        if (g_holdOverlay) {
+            deliverHoldGrabButton(timeMs, key, state_);
             return;
         }
     }

@@ -214,16 +214,16 @@ void CLayerSurface::onMap() {
         LayerPointerHold::syncFreezePin();
 
     const bool KEYBOARD_EXCLUSIVE = m_layerSurface->m_current.keyboardInteractivity == ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE;
+    const bool KEYBOARD_ON_DEMAND = m_layerSurface->m_current.keyboardInteractivity == ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_ON_DEMAND;
+    const auto HOLD_NS            = LayerPointerHold::targetNamespace();
+    // The pointer-hold layer maps on-demand and must not take the seat.
+    const bool SKIP_MAP_FOCUS = !HOLD_NS.empty() && m_namespace == HOLD_NS;
 
     if (KEYBOARD_EXCLUSIVE)
         g_pInputManager->m_exclusiveKeyboardLSes.push_back(m_self);
 
-    const bool GRABS_KEYBOARD = KEYBOARD_EXCLUSIVE ||
-        (m_layerSurface->m_current.keyboardInteractivity != ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE &&
-         // don't focus if constrained
-         (g_pSeatManager->m_mouse.expired() || !g_pInputManager->isConstrained()));
-
-    if (GRABS_KEYBOARD) {
+    const bool UNCONSTRAINED = g_pSeatManager->m_mouse.expired() || !g_pInputManager->isConstrained();
+    if (KEYBOARD_EXCLUSIVE || (KEYBOARD_ON_DEMAND && !SKIP_MAP_FOCUS && UNCONSTRAINED)) {
         // TODO: use the new superb really very cool grab
         if (g_pSeatManager->m_seatGrab && !g_pSeatManager->m_seatGrab->accepts(m_wlSurface->resource()))
             g_pSeatManager->setGrab(nullptr);

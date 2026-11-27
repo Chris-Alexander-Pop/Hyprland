@@ -789,7 +789,7 @@ void CPointerManager::renderSoftwareCursorImmediate(PHLMONITOR pMonitor, std::op
     if (!pMonitor || !hasCursor())
         return;
 
-    auto texture = getCurrentCursorTexture();
+    auto texture = cursorTextureForImage(cursorImageForMonitor(pMonitor));
     if (!texture)
         return;
 

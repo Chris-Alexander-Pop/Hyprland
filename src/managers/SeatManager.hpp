@@ -196,6 +196,8 @@ class CSeatManager {
     void                                    enterAllClientPointers(SP<CWLSurfaceResource> surf, const Vector2D& local);
     void                                    commitPointerFocus(SP<CWLSurfaceResource> surf, const Vector2D& local, bool enter);
     void                                    focusHoldOverlay(SP<CWLSurfaceResource> ov, const Vector2D& local);
+    void                                    deliverHoldGrabMotion(uint32_t timeMs, const Vector2D& global);
+    void                                    deliverHoldGrabButton(uint32_t timeMs, uint32_t key, wl_pointer_button_state state_);
     Vector2D                                pointerLocal() const {
         return m_lastLocalCoords;
     }

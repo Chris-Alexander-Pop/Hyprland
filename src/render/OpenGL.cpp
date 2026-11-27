@@ -28,6 +28,7 @@
 #include "../protocols/ColorManagement.hpp"
 #include "../helpers/cm/ColorManagement.hpp"
 #include "../managers/input/InputManager.hpp"
+#include "../managers/input/LayerPointerHold.hpp"
 #include "../managers/eventLoop/EventLoopManager.hpp"
 #include "../pointer/cursor/CursorManager.hpp"
 #include "../helpers/fs/FsUtils.hpp"
@@ -897,6 +898,22 @@ void CHyprOpenGLImpl::end(CRenderContext& ctx) {
                     ctx.m_data.pMonitor->resources()->markMirrorFBUpdated();
                 else
                     ctx.m_data.pMonitor->resources()->invalidateMirrorFB();
+            }
+
+            // Freeze leaves the live cursor out of the pass so the mirror (the
+            // share) keeps the pin. The shared output is usually the external
+            // monitor; the laptop panel is not copied, so it still shows the
+            // cursor from the pass. Software cursors have no plane of their own,
+            // so paint the moving one into this monitor's frame after the copy.
+            if (const auto MON = ctx.m_data.pMonitor.lock();
+                !ctx.m_gl.fakeFrame && MON && LayerPointerHold::freeze() && MON->needsACopyFB() && Pointer::mgr()->softwareLockedFor(MON) && ctx.m_data.currentFB) {
+                g_pHyprRenderer->bindFB(ctx, ctx.m_data.currentFB);
+                g_pHyprRenderer->setProjectionType(ctx, RPT_MONITOR);
+                ctx.m_data.transformDamage = false;
+                setViewport(0, 0, ctx.m_data.currentFB->m_size.x, ctx.m_data.currentFB->m_size.y);
+                Pointer::mgr()->includeSoftwareCursorDamage(MON, ctx.m_data.damage);
+                blend(true);
+                Pointer::mgr()->renderSoftwareCursorImmediate(MON);
             }
 
             blend(false);

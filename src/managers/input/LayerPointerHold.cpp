@@ -176,7 +176,7 @@ bool LayerPointerHold::freezeBlocksAt(const Vector2D& global) {
 
 void LayerPointerHold::debugLog(const std::string& msg) {
     const char* dir  = getenv("XDG_RUNTIME_DIR");
-    const auto  path = std::string{dir && dir[0] ? dir : "/tmp"} + "/screen-shadow-hypr.log";
+    const auto  path = std::string{dir && dir[0] ? dir : "/tmp"} + "/hyprland-layer-hold.log";
     FILE*       f    = fopen(path.c_str(), "a");
     if (!f)
         return;

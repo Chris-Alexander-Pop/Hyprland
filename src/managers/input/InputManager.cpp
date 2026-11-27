@@ -58,6 +58,7 @@
 #include "../../render/Renderer.hpp"
 #include "trackpad/TrackpadGestures.hpp"
 #include "LayerPointerHold.hpp"
+#include "CopilotChord.hpp"
 #include "../../pointer/cursor/CursorShapeOverrideController.hpp"
 
 #include <aquamarine/input/Input.hpp>
@@ -790,6 +791,8 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus, bool mouse, st
 }
 
 void CInputManager::onMouseButton(IPointer::SButtonEvent e, SP<IPointer> mouse) {
+    CopilotChord::flushPending();
+
     Event::SCallbackInfo info;
     Event::bus()->m_events.input.mouse.button.emit(e, info);
     if (info.cancelled)
@@ -1079,6 +1082,8 @@ void CInputManager::processMouseDownKill(const IPointer::SButtonEvent& e) {
 }
 
 void CInputManager::onMouseWheel(IPointer::SAxisEvent e, SP<IPointer> pointer) {
+    CopilotChord::flushPending();
+
     static auto POFFWINDOWAXIS        = CConfigValue<Config::INTEGER>("input:off_window_axis_events");
     static auto PINPUTSCROLLFACTOR    = CConfigValue<Config::FLOAT>("input:scroll_factor");
     static auto PTOUCHPADSCROLLFACTOR = CConfigValue<Config::FLOAT>("input:touchpad:scroll_factor");
@@ -1821,10 +1826,6 @@ void CInputManager::onKeyboardKey(const IKeyboard::SKeyEvent& event, SP<IKeyboar
 
     const bool           DISALLOWACTION = pKeyboard->isVirtual() && shouldIgnoreVirtualKeyboard(pKeyboard);
 
-    const auto           IME    = m_relay.m_inputMethod.lock();
-    const bool           HASIME = IME && IME->hasGrab();
-    const bool           USEIME = HASIME && !DISALLOWACTION;
-
     Event::SCallbackInfo info;
     Event::bus()->m_events.input.keyboard.key.emit(event, info);
     if (info.cancelled)
@@ -1842,11 +1843,26 @@ void CInputManager::onKeyboardKey(const IKeyboard::SKeyEvent& event, SP<IKeyboar
     if (g_pSeatManager->m_keyboardEventHandlers.dispatch(event, pKeyboard, passEvent))
         return;
 
+    if (CopilotChord::intercept(pKeyboard, event, passEvent))
+        return;
+
     if (!passEvent)
         return;
 
-    auto state   = event.state;
-    auto pressed = state == WL_KEYBOARD_KEY_STATE_PRESSED;
+    deliverKeyboardKey(event, pKeyboard);
+}
+
+void CInputManager::deliverKeyboardKey(const IKeyboard::SKeyEvent& event, SP<IKeyboard> pKeyboard) {
+    if (!pKeyboard)
+        return;
+
+    const bool DISALLOWACTION = pKeyboard->isVirtual() && shouldIgnoreVirtualKeyboard(pKeyboard);
+    const auto IME            = m_relay.m_inputMethod.lock();
+    const bool HASIME         = IME && IME->hasGrab();
+    const bool USEIME         = HASIME && !DISALLOWACTION;
+
+    auto       state   = event.state;
+    auto       pressed = state == WL_KEYBOARD_KEY_STATE_PRESSED;
 
     // use merged keys states when sending to ime or when sending to seat with no ime
     // if passing from ime, send keys directly without merging
@@ -1925,6 +1941,11 @@ void CInputManager::onKeyboardMod(SP<IKeyboard> pKeyboard) {
     if (LayerPointerHold::layerMapped()) {
         MODS.depressed = LayerPointerHold::stripLogoMods(pKeyboard, MODS.depressed);
         MODS.latched   = LayerPointerHold::stripLogoMods(pKeyboard, MODS.latched);
+    }
+
+    if (CopilotChord::hidingMods()) {
+        MODS.depressed = CopilotChord::stripHidden(pKeyboard, MODS.depressed);
+        MODS.latched   = CopilotChord::stripHidden(pKeyboard, MODS.latched);
     }
 
     if (USEIME) {

@@ -102,6 +102,7 @@ class CInputManager {
     void               onMouseWheel(IPointer::SAxisEvent, SP<IPointer> pointer = nullptr);
     void               onPointerFrame();
     void               onKeyboardKey(const IKeyboard::SKeyEvent&, SP<IKeyboard>);
+    void               deliverKeyboardKey(const IKeyboard::SKeyEvent&, SP<IKeyboard>);
     void               onMouseFrame();
     void               onKeyboardMod(SP<IKeyboard>);
 

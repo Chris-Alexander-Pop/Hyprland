@@ -2,7 +2,7 @@
 # Rebuild the bits that embed this Hyprland's commit hash.
 #
 # `ninja install` and `cmake --install` install the compositor and headers,
-# then stop. Plugins and screen-shadow-omit compare that hash at load time
+# then stop. Plugins compare that hash at load time
 # and refuse to run when it moved. Package builds set DESTDIR and skip this.
 #
 # Runs as the owner of this tree when install was invoked with sudo.
@@ -26,17 +26,8 @@ fi
 
 fail=0
 
-omit="${SCREEN_SHADOW_DIR:-$HOME/Engineering/screen-shadow}/scripts/ensure-omit-plugin.sh"
 plugins="${HYPR_PATCHED_PLUGINS_DIR:-$HOME/Engineering/hyprland-patched-plugins}/sync.sh"
 polkit="$HOME/.config/ags/scripts/build-hypr-polkit.sh"
-
-if [[ -x "$omit" ]]; then
-    echo "==> screen-shadow-omit"
-    "$omit" --ensure || fail=1
-else
-    echo "after-install: missing $omit" >&2
-    fail=1
-fi
 
 if [[ -x "$plugins" ]]; then
     echo "==> community plugins"
